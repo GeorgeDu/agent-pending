@@ -24,7 +24,14 @@ mkdir -p "$APP_DIR" "$CLI_DIR" "$SHARED_SKILLS_DIR" "$LAUNCH_AGENTS_DIR"
 
 for client_dir in "$HOME/.codex/skills" "$HOME/.claude/skills"; do
   mkdir -p "$client_dir"
-  ln -sfn "$SHARED_SKILL" "$client_dir/agent-pending"
+  client_skill="$client_dir/agent-pending"
+  if [[ "$client_skill" == "$SHARED_SKILL" ]]; then
+    continue
+  fi
+  if [[ -e "$client_skill" && ! -L "$client_skill" ]]; then
+    rm -rf "$client_skill"
+  fi
+  ln -sfn "$SHARED_SKILL" "$client_skill"
 done
 
 escaped_app_path="$(printf '%s' "$APP_PATH" | sed 's/[&|]/\\&/g')"

@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 
+import os
 import plistlib
 import re
+import subprocess
 import struct
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -54,6 +57,44 @@ class PublicRepositoryTests(unittest.TestCase):
         self.assertIn("allow_implicit_invocation: false", metadata)
         self.assertIn("Never trigger", instructions)
         self.assertIn("one item", instructions.lower())
+
+    def test_install_replaces_legacy_client_skill_directories(self):
+        with tempfile.TemporaryDirectory() as temporary_home:
+            home = Path(temporary_home)
+            for client in (".codex", ".claude"):
+                legacy_skill = home / client / "skills" / "agent-pending"
+                legacy_skill.mkdir(parents=True)
+                (legacy_skill / "SKILL.md").write_text(
+                    "legacy skill still writes pending.json\n",
+                    encoding="utf-8",
+                )
+
+            environment = {
+                **os.environ,
+                "HOME": temporary_home,
+                "AGENT_PENDING_SKIP_LAUNCH": "1",
+            }
+            subprocess.run(
+                [str(ROOT / "scripts" / "install.sh")],
+                cwd=ROOT,
+                check=True,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+
+            shared_skill = home / ".agents" / "skills" / "agent-pending"
+            expected = (ROOT / "skill" / "agent-pending" / "SKILL.md").read_text(
+                encoding="utf-8"
+            )
+            for client in (".codex", ".claude"):
+                installed_skill = home / client / "skills" / "agent-pending"
+                self.assertTrue(installed_skill.is_symlink())
+                self.assertEqual(shared_skill.resolve(), installed_skill.resolve())
+                self.assertEqual(
+                    expected,
+                    (installed_skill / "SKILL.md").read_text(encoding="utf-8"),
+                )
 
     def test_bilingual_readmes_are_linked_and_screenshot_is_present(self):
         chinese = (ROOT / "README.md").read_text(encoding="utf-8")
