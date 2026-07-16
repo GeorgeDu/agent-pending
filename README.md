@@ -43,10 +43,10 @@ cd agent-pending
 
 - App：`~/Applications/Agent Pending.app`
 - CLI：`~/.local/bin/agent-pending`
-- Skill 源目录：`~/.agents/skills/agent-pending`
+- Skill 源目录：已有 `~/agent-skills/09-agent-ops` 时安装到该目录，否则使用 `~/.agents/skills/agent-pending`
 - 数据：`~/Library/Application Support/Agent Pending/store.json`
 
-安装脚本会在 Codex 和 Claude Code 的技能目录可用时创建软连接，并注册登录启动。退出 App 后不会在当前登录会话中自行重启；可从 `~/Applications/Agent Pending.app` 再次打开。
+可通过 `AGENT_SKILLS_HOME` 指定其他 Skill 根目录。安装脚本会为 Codex 和 Claude Code 创建软连接，并注册登录启动。退出 App 后不会在当前登录会话中自行重启；可从 `~/Applications/Agent Pending.app` 再次打开。
 
 ## 使用
 

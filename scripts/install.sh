@@ -7,7 +7,13 @@ APP_DIR="${AGENT_PENDING_APP_DIR:-$HOME/Applications}"
 APP_PATH="$APP_DIR/Agent Pending.app"
 CLI_DIR="${AGENT_PENDING_CLI_DIR:-$HOME/.local/bin}"
 CLI_PATH="$CLI_DIR/agent-pending"
-SHARED_SKILLS_DIR="${AGENT_SKILLS_HOME:-$HOME/.agents/skills}"
+if [[ -n "${AGENT_SKILLS_HOME:-}" ]]; then
+  SHARED_SKILLS_DIR="$AGENT_SKILLS_HOME"
+elif [[ -d "$HOME/agent-skills/09-agent-ops" ]]; then
+  SHARED_SKILLS_DIR="$HOME/agent-skills/09-agent-ops"
+else
+  SHARED_SKILLS_DIR="$HOME/.agents/skills"
+fi
 SHARED_SKILL="$SHARED_SKILLS_DIR/agent-pending"
 LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
 LAUNCH_AGENT="$LAUNCH_AGENTS_DIR/io.github.georgedu.agent-pending.plist"

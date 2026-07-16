@@ -58,9 +58,11 @@ class PublicRepositoryTests(unittest.TestCase):
         self.assertIn("Never trigger", instructions)
         self.assertIn("one item", instructions.lower())
 
-    def test_install_replaces_legacy_client_skill_directories(self):
+    def test_install_uses_existing_skill_catalog_and_replaces_legacy_client_skills(self):
         with tempfile.TemporaryDirectory() as temporary_home:
             home = Path(temporary_home)
+            skills_root = home / "agent-skills" / "09-agent-ops"
+            skills_root.mkdir(parents=True)
             for client in (".codex", ".claude"):
                 legacy_skill = home / client / "skills" / "agent-pending"
                 legacy_skill.mkdir(parents=True)
@@ -83,10 +85,11 @@ class PublicRepositoryTests(unittest.TestCase):
                 env=environment,
             )
 
-            shared_skill = home / ".agents" / "skills" / "agent-pending"
+            shared_skill = skills_root / "agent-pending"
             expected = (ROOT / "skill" / "agent-pending" / "SKILL.md").read_text(
                 encoding="utf-8"
             )
+            self.assertFalse((home / ".agents" / "skills" / "agent-pending").exists())
             for client in (".codex", ".claude"):
                 installed_skill = home / client / "skills" / "agent-pending"
                 self.assertTrue(installed_skill.is_symlink())

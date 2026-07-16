@@ -43,10 +43,10 @@ The installer does not require `sudo`. Default locations:
 
 - App: `~/Applications/Agent Pending.app`
 - CLI: `~/.local/bin/agent-pending`
-- Shared skill source: `~/.agents/skills/agent-pending`
+- Shared skill source: an existing `~/agent-skills/09-agent-ops` catalog, otherwise `~/.agents/skills/agent-pending`
 - Data: `~/Library/Application Support/Agent Pending/store.json`
 
-It creates skill links for Codex and Claude Code when their skill directories are available and registers the app to start at login. If you quit the app, it stays closed for the current login session; reopen it from `~/Applications/Agent Pending.app`.
+Set `AGENT_SKILLS_HOME` to choose another skill root. The installer creates skill links for Codex and Claude Code and registers the app to start at login. If you quit the app, it stays closed for the current login session; reopen it from `~/Applications/Agent Pending.app`.
 
 ## Use
 

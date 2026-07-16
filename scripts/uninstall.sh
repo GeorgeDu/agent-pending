@@ -4,7 +4,13 @@ set -euo pipefail
 
 APP_DIR="${AGENT_PENDING_APP_DIR:-$HOME/Applications}"
 CLI_DIR="${AGENT_PENDING_CLI_DIR:-$HOME/.local/bin}"
-SHARED_SKILLS_DIR="${AGENT_SKILLS_HOME:-$HOME/.agents/skills}"
+if [[ -n "${AGENT_SKILLS_HOME:-}" ]]; then
+  SHARED_SKILLS_DIR="$AGENT_SKILLS_HOME"
+elif [[ -d "$HOME/agent-skills/09-agent-ops" ]]; then
+  SHARED_SKILLS_DIR="$HOME/agent-skills/09-agent-ops"
+else
+  SHARED_SKILLS_DIR="$HOME/.agents/skills"
+fi
 LAUNCH_AGENT="$HOME/Library/LaunchAgents/io.github.georgedu.agent-pending.plist"
 LABEL="io.github.georgedu.agent-pending"
 DOMAIN="gui/$(id -u)"
