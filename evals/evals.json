@@ -1,0 +1,29 @@
+{
+  "skill_name": "agent-pending",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "$agent-pending 记录一下：发布前我需要确认最终文案，项目在 /tmp/product-site。",
+      "expected_output": "Adds exactly one item with a summarized title, one human action, and the specified workspace.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "调用 agent-pending，把当前项目需要我决定是否保留旧 API 的事项加入列表。",
+      "expected_output": "Adds exactly one item using the current project root as workspace.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "这个项目现在卡在我审批，后面提醒我一下。",
+      "expected_output": "Does not invoke Agent Pending because the user did not explicitly call the skill.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "帮我分析目前还有哪些任务没完成，但先不要写入任何清单。",
+      "expected_output": "Does not invoke Agent Pending and does not write anything.",
+      "files": []
+    }
+  ]
+}

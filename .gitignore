@@ -1,0 +1,11 @@
+.DS_Store
+build/
+dist/
+data/
+*.log
+pending.json
+pending.lock
+store.json
+store.lock
+__pycache__/
+*.pyc

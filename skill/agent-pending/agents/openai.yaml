@@ -1,0 +1,10 @@
+interface:
+  display_name: "Agent Pending"
+  short_description: "Explicitly save one human-owned pending action"
+  icon_small: "./assets/AppIcon.png"
+  icon_large: "./assets/AppIcon.png"
+  brand_color: "#F5A623"
+  default_prompt: "Use $agent-pending to save this as one item I still need to handle."
+
+policy:
+  allow_implicit_invocation: false

@@ -1,0 +1,22 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test CLI store
+        run: |
+          /usr/bin/python3 tests/test_agent_pending.py
+          /usr/bin/python3 tests/test_public_repo.py
+      - name: Build macOS app
+        run: ./scripts/build.sh
+      - name: Smoke-test user installation
+        env:
+          HOME: ${{ runner.temp }}/agent-pending-home
+          AGENT_PENDING_SKIP_LAUNCH: "1"
+        run: ./scripts/install.sh
