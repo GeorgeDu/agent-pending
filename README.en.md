@@ -9,7 +9,9 @@
   <a href="README.md">简体中文</a>
 </p>
 
-![Agent Pending running in Chinese](docs/images/agent-pending-zh.png)
+<p align="center">
+  <img src="docs/images/agent-pending-zh.png" width="452" alt="Agent Pending running in Chinese">
+</p>
 
 Agent Pending collects human next actions scattered across terminals, repositories, and conversations into one local menu-bar list. An item may be an approval, an unfinished task, a follow-up, or a wish. The common property is that it still belongs to you and the agent cannot complete it autonomously.
 
@@ -125,6 +127,12 @@ AGENT_PENDING_LANGUAGE=en ./scripts/demo.sh
 ```
 
 On macOS, press `Shift-Command-4`, then Space, and select the popover. Confirm that the image contains demo items only before committing it.
+
+To center the popover on the Retina main display for a high-resolution documentation screenshot:
+
+```bash
+AGENT_PENDING_SCREENSHOT_MODE=1 ./scripts/demo.sh
+```
 
 ## Build and test
 

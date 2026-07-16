@@ -91,10 +91,12 @@ static NSString *APCountText(NSUInteger count) {
 @property(nonatomic, strong) NSMutableSet<NSString *> *knownIdentifiers;
 @property(nonatomic, strong) NSTimer *refreshTimer;
 @property(nonatomic, strong) NSMenu *statusMenu;
+@property(nonatomic, strong) NSWindow *screenshotAnchorWindow;
 @property(nonatomic, assign) BOOL initialLoadFinished;
 - (NSMutableDictionary *)mutableStoreFromDisk:(NSError **)error;
 - (BOOL)writeStore:(NSDictionary *)store error:(NSError **)error;
 - (void)rebuildLocalizedInterface;
+- (void)showScreenshotPopover;
 @end
 
 // NSApplication.delegate is weak. Keep the delegate alive for the full process lifetime.
@@ -372,11 +374,48 @@ static NSButton *APIconButton(NSString *symbol, NSString *toolTip, id target, SE
                                                       userInfo:nil
                                                        repeats:YES];
 
-    if ([NSProcessInfo.processInfo.environment[@"AGENT_PENDING_OPEN_ON_LAUNCH"] isEqualToString:@"1"]) {
+    if ([NSProcessInfo.processInfo.environment[@"AGENT_PENDING_SCREENSHOT_MODE"] isEqualToString:@"1"]) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [self showScreenshotPopover];
+        });
+    } else if ([NSProcessInfo.processInfo.environment[@"AGENT_PENDING_OPEN_ON_LAUNCH"] isEqualToString:@"1"]) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             [self showListFromMenu:nil];
         });
     }
+}
+
+- (void)showScreenshotPopover {
+    NSScreen *screen = NSScreen.mainScreen ?: NSScreen.screens.firstObject;
+    if (!screen) {
+        [self showListFromMenu:nil];
+        return;
+    }
+
+    (void)self.pendingController.view;
+    [self.pendingController updateItems:self.items];
+    NSSize popoverSize = self.pendingController.preferredContentSize;
+    NSRect visibleFrame = screen.visibleFrame;
+    NSRect anchorFrame = NSMakeRect(
+        NSMidX(visibleFrame) - 1,
+        NSMidY(visibleFrame) + popoverSize.height / 2,
+        2,
+        2
+    );
+    self.screenshotAnchorWindow = [[NSWindow alloc]
+        initWithContentRect:anchorFrame
+                  styleMask:NSWindowStyleMaskBorderless
+                    backing:NSBackingStoreBuffered
+                      defer:NO
+                     screen:screen];
+    self.screenshotAnchorWindow.opaque = NO;
+    self.screenshotAnchorWindow.backgroundColor = NSColor.clearColor;
+    self.screenshotAnchorWindow.ignoresMouseEvents = YES;
+    [self.screenshotAnchorWindow orderFront:nil];
+
+    [self.popover showRelativeToRect:self.screenshotAnchorWindow.contentView.bounds
+                              ofView:self.screenshotAnchorWindow.contentView
+                       preferredEdge:NSRectEdgeMinY];
 }
 
 - (void)rebuildLocalizedInterface {

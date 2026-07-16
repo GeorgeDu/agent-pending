@@ -9,7 +9,9 @@
   <a href="README.en.md">English</a>
 </p>
 
-![Agent Pending 中文运行界面](docs/images/agent-pending-zh.png)
+<p align="center">
+  <img src="docs/images/agent-pending-zh.png" width="452" alt="Agent Pending 中文运行界面">
+</p>
 
 Agent Pending 把散落在不同终端、项目和对话中的人工下一步，收进 Mac 菜单栏的一份本地清单。它既可以记录审批，也可以记录未完成任务、后续动作或愿望；共同点是：这件事仍然需要你处理，Agent 不能自行完成。
 
@@ -125,6 +127,12 @@ AGENT_PENDING_LANGUAGE=en ./scripts/demo.sh
 ```
 
 在 macOS 中可按 `Shift-Command-4` 后按空格，点选浮窗进行截图。提交截图前确认画面只包含演示事项。
+
+要将浮窗定位到 Retina 主屏中央以生成高清文档截图：
+
+```bash
+AGENT_PENDING_SCREENSHOT_MODE=1 ./scripts/demo.sh
+```
 
 ## 构建与测试
 

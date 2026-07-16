@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
 import plistlib
+import re
+import struct
 import unittest
 from pathlib import Path
 
@@ -62,6 +64,16 @@ class PublicRepositoryTests(unittest.TestCase):
         self.assertIn("README.md", english)
         self.assertIn("docs/images/agent-pending-zh.png", chinese)
         self.assertTrue(screenshot.is_file())
+
+        with screenshot.open("rb") as image:
+            self.assertEqual(b"\x89PNG\r\n\x1a\n", image.read(8))
+            image.read(8)
+            pixel_width, _ = struct.unpack(">II", image.read(8))
+        displayed_width = int(
+            re.search(r'agent-pending-zh\.png" width="(\d+)"', chinese).group(1)
+        )
+        self.assertGreaterEqual(pixel_width, displayed_width * 2)
+        self.assertIn(f'width="{displayed_width}"', english)
 
     def test_app_has_chinese_default_and_english_ui(self):
         source = (ROOT / "src" / "AgentPendingApp.m").read_text(encoding="utf-8")
