@@ -13,12 +13,16 @@ PRIVATE_MARKERS = (
     "Decision" + "OS",
     "Nu" + "wa",
 )
+IGNORED_DIRS = {".git", "dist", "build", "__pycache__"}
 
 
 class PublicRepositoryTests(unittest.TestCase):
     def test_text_files_contain_no_private_markers(self):
         violations = []
         for path in ROOT.rglob("*"):
+            relative = path.relative_to(ROOT)
+            if any(part in IGNORED_DIRS for part in relative.parts):
+                continue
             if not path.is_file() or path.suffix not in TEXT_SUFFIXES:
                 continue
             content = path.read_text(encoding="utf-8")
