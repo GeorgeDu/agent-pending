@@ -41,8 +41,9 @@ static NSString *APText(NSString *key) {
         strings = @{
             @"title": @{@"zh": @"待确认", @"en": @"Pending"},
             @"empty": @{@"zh": @"✓  没有待处理事项", @"en": @"✓  Nothing pending"},
-            @"footer": @{@"zh": @"新增事项请调用 $agent-pending", @"en": @"Add items with $agent-pending"},
+            @"footer": @{@"zh": @"点击 + 新增，或调用 $agent-pending", @"en": @"Use + or $agent-pending to add"},
             @"quit": @{@"zh": @"退出", @"en": @"Quit"},
+            @"add": @{@"zh": @"新增", @"en": @"Add"},
             @"edit": @{@"zh": @"编辑", @"en": @"Edit"},
             @"complete": @{@"zh": @"完成并归档", @"en": @"Complete and archive"},
             @"show_list": @{@"zh": @"显示待确认列表", @"en": @"Show pending list"},
@@ -50,11 +51,13 @@ static NSString *APText(NSString *key) {
             @"restart": @{@"zh": @"重启 Agent Pending", @"en": @"Restart Agent Pending"},
             @"quit_app": @{@"zh": @"退出 Agent Pending", @"en": @"Quit Agent Pending"},
             @"new_item": @{@"zh": @"新的待确认事项", @"en": @"New pending item"},
+            @"add_item": @{@"zh": @"新增待确认事项", @"en": @"Add pending item"},
             @"edit_item": @{@"zh": @"编辑待确认事项", @"en": @"Edit pending item"},
             @"save": @{@"zh": @"保存", @"en": @"Save"},
             @"cancel": @{@"zh": @"取消", @"en": @"Cancel"},
             @"item_placeholder": @{@"zh": @"项目 / 事项", @"en": @"Project / item"},
             @"note_placeholder": @{@"zh": @"等待你处理的一句话", @"en": @"One action that still needs you"},
+            @"workspace_placeholder": @{@"zh": @"工作区绝对路径", @"en": @"Absolute workspace path"},
         };
     });
     return strings[key][APLanguage()] ?: key;
@@ -68,6 +71,7 @@ static NSString *APCountText(NSUInteger count) {
 }
 
 @protocol PendingControllerDelegate <NSObject>
+- (void)addItem;
 - (void)editItemWithIdentifier:(NSString *)identifier;
 - (void)completeItemWithIdentifier:(NSString *)identifier;
 - (void)quitApplication;
@@ -147,10 +151,14 @@ static NSButton *APIconButton(NSString *symbol, NSString *toolTip, id target, SE
 
     NSView *header = [[NSView alloc] init];
     header.translatesAutoresizingMaskIntoConstraints = NO;
+    NSButton *addButton = APIconButton(@"plus", APText(@"add"), self, @selector(addClicked:));
     [header addSubview:headerText];
+    [header addSubview:addButton];
     [NSLayoutConstraint activateConstraints:@[
         [headerText.leadingAnchor constraintEqualToAnchor:header.leadingAnchor constant:14],
         [headerText.centerYAnchor constraintEqualToAnchor:header.centerYAnchor],
+        [addButton.trailingAnchor constraintEqualToAnchor:header.trailingAnchor constant:-14],
+        [addButton.centerYAnchor constraintEqualToAnchor:header.centerYAnchor],
         [header.heightAnchor constraintEqualToConstant:52],
     ]];
 
@@ -335,6 +343,10 @@ static NSButton *APIconButton(NSString *symbol, NSString *toolTip, id target, SE
     [self.delegate editItemWithIdentifier:sender.identifier];
 }
 
+- (void)addClicked:(id)sender {
+    [self.delegate addItem];
+}
+
 - (void)completeClicked:(NSButton *)sender {
     [self.delegate completeItemWithIdentifier:sender.identifier];
 }
@@ -481,10 +493,18 @@ static NSButton *APIconButton(NSString *symbol, NSString *toolTip, id target, SE
     [self.refreshTimer invalidate];
 }
 
+- (void)applicationDidResignActive:(NSNotification *)notification {
+    if (![NSProcessInfo.processInfo.environment[@"AGENT_PENDING_SCREENSHOT_MODE"] isEqualToString:@"1"] &&
+        self.popover.shown) {
+        [self.popover performClose:nil];
+    }
+}
+
 - (void)statusItemClicked:(NSStatusBarButton *)sender {
     NSEvent *event = NSApp.currentEvent;
     NSLog(@"Agent Pending status item click: type=%ld", (long)event.type);
     if (event.type == NSEventTypeRightMouseUp) {
+        [self.popover performClose:nil];
         [NSMenu popUpContextMenu:self.statusMenu withEvent:event forView:sender];
         return;
     }
@@ -497,6 +517,7 @@ static NSButton *APIconButton(NSString *symbol, NSString *toolTip, id target, SE
         return;
     }
     [self.pendingController updateItems:self.items];
+    [NSApp activateIgnoringOtherApps:YES];
     [self.popover showRelativeToRect:self.statusItem.button.bounds
                               ofView:self.statusItem.button
                        preferredEdge:NSRectEdgeMinY];
@@ -505,6 +526,7 @@ static NSButton *APIconButton(NSString *symbol, NSString *toolTip, id target, SE
 - (void)showListFromMenu:(id)sender {
     if (!self.popover.shown) {
         [self.pendingController updateItems:self.items];
+        [NSApp activateIgnoringOtherApps:YES];
         [self.popover showRelativeToRect:self.statusItem.button.bounds
                                   ofView:self.statusItem.button
                            preferredEdge:NSRectEdgeMinY];
@@ -579,6 +601,66 @@ static NSButton *APIconButton(NSString *symbol, NSString *toolTip, id target, SE
                                                                           content:content
                                                                           trigger:nil];
     [UNUserNotificationCenter.currentNotificationCenter addNotificationRequest:request withCompletionHandler:nil];
+}
+
+- (void)addItem {
+    NSAlert *alert = [[NSAlert alloc] init];
+    alert.messageText = APText(@"add_item");
+    [alert addButtonWithTitle:APText(@"add")];
+    [alert addButtonWithTitle:APText(@"cancel")];
+
+    NSTextField *titleField = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 340, 24)];
+    titleField.placeholderString = APText(@"item_placeholder");
+    NSTextField *noteField = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 340, 24)];
+    noteField.placeholderString = APText(@"note_placeholder");
+    NSTextField *workspaceField = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 340, 24)];
+    workspaceField.font = [NSFont monospacedSystemFontOfSize:11 weight:NSFontWeightRegular];
+    workspaceField.placeholderString = APText(@"workspace_placeholder");
+    workspaceField.stringValue = NSHomeDirectory();
+
+    NSStackView *fields = [NSStackView stackViewWithViews:@[titleField, noteField, workspaceField]];
+    fields.orientation = NSUserInterfaceLayoutOrientationVertical;
+    fields.spacing = 8;
+    fields.frame = NSMakeRect(0, 0, 340, 88);
+    alert.accessoryView = fields;
+
+    [NSApp activateIgnoringOtherApps:YES];
+    if ([alert runModal] != NSAlertFirstButtonReturn) {
+        return;
+    }
+    NSString *title = [titleField.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    NSString *note = [noteField.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    NSString *workspace = [workspaceField.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if (title.length == 0 || note.length == 0) {
+        NSBeep();
+        return;
+    }
+    if (workspace.length == 0) {
+        workspace = NSHomeDirectory();
+    }
+    workspace = workspace.stringByExpandingTildeInPath.stringByStandardizingPath;
+    if (![workspace hasPrefix:@"/"]) {
+        workspace = [NSHomeDirectory() stringByAppendingPathComponent:workspace];
+    }
+
+    NSISO8601DateFormatter *formatter = [[NSISO8601DateFormatter alloc] init];
+    NSMutableDictionary *newItem = [@{
+        @"id": NSUUID.UUID.UUIDString,
+        @"title": title,
+        @"note": note,
+        @"workspace_path": workspace,
+        @"created_at": [formatter stringFromDate:NSDate.date],
+    } mutableCopy];
+    [self modifyItems:^(NSMutableArray<NSMutableDictionary *> *items) {
+        for (NSDictionary *candidate in items) {
+            if ([candidate[@"title"] isEqualToString:title] &&
+                [candidate[@"note"] isEqualToString:note] &&
+                [candidate[@"workspace_path"] isEqualToString:workspace]) {
+                return;
+            }
+        }
+        [items addObject:newItem];
+    }];
 }
 
 - (void)editItemWithIdentifier:(NSString *)identifier {

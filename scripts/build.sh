@@ -4,7 +4,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${AGENT_PENDING_BUILD_DIR:-$ROOT/build}"
-DIST_DIR="${AGENT_PENDING_DIST_DIR:-$ROOT/dist}"
+DIST_DIR="${AGENT_PENDING_DIST_DIR:-$ROOT/build/.artifacts}"
 APP="$DIST_DIR/Agent Pending.app"
 CONTENTS="$APP/Contents"
 

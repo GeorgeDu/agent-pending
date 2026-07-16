@@ -18,7 +18,7 @@ PRIVATE_MARKERS = (
     "Decision" + "OS",
     "Nu" + "wa",
 )
-IGNORED_DIRS = {".git", "dist", "build", "__pycache__"}
+IGNORED_DIRS = {".git", ".DS_Store", "dist", "build", "__pycache__"}
 
 
 class PublicRepositoryTests(unittest.TestCase):
@@ -122,6 +122,17 @@ class PublicRepositoryTests(unittest.TestCase):
         self.assertIn('@"zh": @"待确认"', source)
         self.assertIn('@"en": @"Pending"', source)
         self.assertIn('@selector(changeLanguage:)', source)
+
+    def test_app_supports_gui_add_and_outside_click_dismissal(self):
+        source = (ROOT / "src" / "AgentPendingApp.m").read_text(encoding="utf-8")
+        self.assertIn('APIconButton(@"plus"', source)
+        self.assertIn("- (void)addItem", source)
+        self.assertIn("applicationDidResignActive", source)
+        self.assertIn("activateIgnoringOtherApps", source)
+
+    def test_default_build_app_is_hidden_from_launchpad(self):
+        build = (ROOT / "scripts" / "build.sh").read_text(encoding="utf-8")
+        self.assertIn('$ROOT/build/.artifacts', build)
 
     def test_demo_is_isolated_from_production_data(self):
         demo = (ROOT / "scripts" / "demo.sh").read_text(encoding="utf-8")
