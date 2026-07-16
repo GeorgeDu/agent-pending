@@ -53,6 +53,29 @@ class PublicRepositoryTests(unittest.TestCase):
         self.assertIn("Never trigger", instructions)
         self.assertIn("one item", instructions.lower())
 
+    def test_bilingual_readmes_are_linked_and_screenshot_is_present(self):
+        chinese = (ROOT / "README.md").read_text(encoding="utf-8")
+        english = (ROOT / "README.en.md").read_text(encoding="utf-8")
+        screenshot = ROOT / "docs" / "images" / "agent-pending-zh.png"
+
+        self.assertIn("README.en.md", chinese)
+        self.assertIn("README.md", english)
+        self.assertIn("docs/images/agent-pending-zh.png", chinese)
+        self.assertTrue(screenshot.is_file())
+
+    def test_app_has_chinese_default_and_english_ui(self):
+        source = (ROOT / "src" / "AgentPendingApp.m").read_text(encoding="utf-8")
+        self.assertIn('return [saved isEqualToString:@"en"] ? @"en" : @"zh";', source)
+        self.assertIn('@"zh": @"待确认"', source)
+        self.assertIn('@"en": @"Pending"', source)
+        self.assertIn('@selector(changeLanguage:)', source)
+
+    def test_demo_is_isolated_from_production_data(self):
+        demo = (ROOT / "scripts" / "demo.sh").read_text(encoding="utf-8")
+        self.assertIn("mktemp -d", demo)
+        self.assertIn('AGENT_PENDING_DATA_DIR="$DEMO_DATA"', demo)
+        self.assertIn("trap cleanup", demo)
+
 
 if __name__ == "__main__":
     unittest.main()

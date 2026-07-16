@@ -24,10 +24,11 @@ Record one item only after an explicit invocation. The list is external memory f
 
 6. Treat exit code 0 plus a JSON object containing a non-empty `id` as success. If `created` is false, report that the identical item already existed.
 
-Return only one line:
+Return only one line, matching the user's language (Chinese by default). Use one of these forms:
 
 ```text
-Recorded: <title> — <one next action>
+Chinese: 已记录：<title> — <one next action>
+English: Recorded: <title> — <one next action>
 ```
 
-Do not scan for other items, infer tasks from the conversation, or add more than the item named in this invocation.
+Do not scan workspace files, scan for other items, infer tasks from the conversation, or add more than the item named in this invocation. The workspace path is location metadata only. This skill adds items; use the CLI directly for archive and restore operations.

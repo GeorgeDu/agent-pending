@@ -25,6 +25,48 @@ static NSString *APLockFile(void) {
     return [APDataDirectory() stringByAppendingPathComponent:@"store.lock"];
 }
 
+static NSString *APLanguage(void) {
+    NSString *override = NSProcessInfo.processInfo.environment[@"AGENT_PENDING_LANGUAGE"];
+    if ([override isEqualToString:@"en"] || [override isEqualToString:@"zh"]) {
+        return override;
+    }
+    NSString *saved = [NSUserDefaults.standardUserDefaults stringForKey:@"AgentPendingLanguage"];
+    return [saved isEqualToString:@"en"] ? @"en" : @"zh";
+}
+
+static NSString *APText(NSString *key) {
+    static NSDictionary<NSString *, NSDictionary<NSString *, NSString *> *> *strings;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        strings = @{
+            @"title": @{@"zh": @"待确认", @"en": @"Pending"},
+            @"empty": @{@"zh": @"✓  没有待处理事项", @"en": @"✓  Nothing pending"},
+            @"footer": @{@"zh": @"新增事项请调用 $agent-pending", @"en": @"Add items with $agent-pending"},
+            @"quit": @{@"zh": @"退出", @"en": @"Quit"},
+            @"edit": @{@"zh": @"编辑", @"en": @"Edit"},
+            @"complete": @{@"zh": @"完成并归档", @"en": @"Complete and archive"},
+            @"show_list": @{@"zh": @"显示待确认列表", @"en": @"Show pending list"},
+            @"language": @{@"zh": @"语言", @"en": @"Language"},
+            @"restart": @{@"zh": @"重启 Agent Pending", @"en": @"Restart Agent Pending"},
+            @"quit_app": @{@"zh": @"退出 Agent Pending", @"en": @"Quit Agent Pending"},
+            @"new_item": @{@"zh": @"新的待确认事项", @"en": @"New pending item"},
+            @"edit_item": @{@"zh": @"编辑待确认事项", @"en": @"Edit pending item"},
+            @"save": @{@"zh": @"保存", @"en": @"Save"},
+            @"cancel": @{@"zh": @"取消", @"en": @"Cancel"},
+            @"item_placeholder": @{@"zh": @"项目 / 事项", @"en": @"Project / item"},
+            @"note_placeholder": @{@"zh": @"等待你处理的一句话", @"en": @"One action that still needs you"},
+        };
+    });
+    return strings[key][APLanguage()] ?: key;
+}
+
+static NSString *APCountText(NSUInteger count) {
+    if ([APLanguage() isEqualToString:@"en"]) {
+        return [NSString stringWithFormat:(count == 1 ? @"%lu item" : @"%lu items"), (unsigned long)count];
+    }
+    return [NSString stringWithFormat:@"%lu 项", (unsigned long)count];
+}
+
 @protocol PendingControllerDelegate <NSObject>
 - (void)editItemWithIdentifier:(NSString *)identifier;
 - (void)completeItemWithIdentifier:(NSString *)identifier;
@@ -52,6 +94,7 @@ static NSString *APLockFile(void) {
 @property(nonatomic, assign) BOOL initialLoadFinished;
 - (NSMutableDictionary *)mutableStoreFromDisk:(NSError **)error;
 - (BOOL)writeStore:(NSDictionary *)store error:(NSError **)error;
+- (void)rebuildLocalizedInterface;
 @end
 
 // NSApplication.delegate is weak. Keep the delegate alive for the full process lifetime.
@@ -92,8 +135,8 @@ static NSButton *APIconButton(NSString *symbol, NSString *toolTip, id target, SE
     NSView *root = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 380, 220)];
     self.view = root;
 
-    NSTextField *title = APLabel(@"待确认", [NSFont systemFontOfSize:15 weight:NSFontWeightSemibold], NSColor.labelColor);
-    self.countLabel = APLabel(@"0 项", [NSFont systemFontOfSize:11], NSColor.secondaryLabelColor);
+    NSTextField *title = APLabel(APText(@"title"), [NSFont systemFontOfSize:15 weight:NSFontWeightSemibold], NSColor.labelColor);
+    self.countLabel = APLabel(APCountText(0), [NSFont systemFontOfSize:11], NSColor.secondaryLabelColor);
     NSStackView *headerText = [NSStackView stackViewWithViews:@[title, self.countLabel]];
     headerText.orientation = NSUserInterfaceLayoutOrientationVertical;
     headerText.alignment = NSLayoutAttributeLeading;
@@ -132,8 +175,8 @@ static NSButton *APIconButton(NSString *symbol, NSString *toolTip, id target, SE
     self.scrollView.documentView = documentView;
     [documentView.widthAnchor constraintEqualToAnchor:self.scrollView.contentView.widthAnchor].active = YES;
 
-    NSTextField *footerText = APLabel(@"新增事项请调用 $agent-pending", [NSFont systemFontOfSize:10], NSColor.secondaryLabelColor);
-    NSButton *quitButton = [NSButton buttonWithTitle:@"退出" target:self action:@selector(quitClicked:)];
+    NSTextField *footerText = APLabel(APText(@"footer"), [NSFont systemFontOfSize:10], NSColor.secondaryLabelColor);
+    NSButton *quitButton = [NSButton buttonWithTitle:APText(@"quit") target:self action:@selector(quitClicked:)];
     quitButton.bordered = NO;
     quitButton.font = [NSFont systemFontOfSize:11];
     quitButton.contentTintColor = NSColor.secondaryLabelColor;
@@ -188,7 +231,7 @@ static NSButton *APIconButton(NSString *symbol, NSString *toolTip, id target, SE
     if (!self.isViewLoaded) {
         return;
     }
-    self.countLabel.stringValue = [NSString stringWithFormat:@"%lu 项", (unsigned long)self.items.count];
+    self.countLabel.stringValue = APCountText(self.items.count);
     for (NSView *view in [self.itemStack.arrangedSubviews copy]) {
         [self.itemStack removeArrangedSubview:view];
         [view removeFromSuperview];
@@ -197,7 +240,7 @@ static NSButton *APIconButton(NSString *symbol, NSString *toolTip, id target, SE
     if (self.items.count == 0) {
         NSView *empty = [[NSView alloc] init];
         empty.translatesAutoresizingMaskIntoConstraints = NO;
-        NSTextField *emptyLabel = APLabel(@"✓  没有待处理事项", [NSFont systemFontOfSize:13], NSColor.secondaryLabelColor);
+        NSTextField *emptyLabel = APLabel(APText(@"empty"), [NSFont systemFontOfSize:13], NSColor.secondaryLabelColor);
         [empty addSubview:emptyLabel];
         [NSLayoutConstraint activateConstraints:@[
             [empty.heightAnchor constraintEqualToConstant:126],
@@ -214,7 +257,7 @@ static NSButton *APIconButton(NSString *symbol, NSString *toolTip, id target, SE
         }
     }
 
-    CGFloat height = self.items.count == 0 ? 220 : MIN(620, 94 + self.items.count * 62);
+    CGFloat height = self.items.count == 0 ? 220 : MIN(620, 94 + self.items.count * 74);
     self.preferredContentSize = NSMakeSize(380, height);
 }
 
@@ -227,30 +270,38 @@ static NSButton *APIconButton(NSString *symbol, NSString *toolTip, id target, SE
     title.lineBreakMode = NSLineBreakByTruncatingTail;
     title.maximumNumberOfLines = 1;
 
-    NSString *subtitleText = [NSString stringWithFormat:@"%@  ·  %@",
-                              item[@"note"] ?: @"",
-                              [self displayDate:item[@"created_at"]]];
-    NSTextField *subtitle = APLabel(subtitleText, [NSFont systemFontOfSize:11], NSColor.secondaryLabelColor);
+    NSTextField *subtitle = APLabel(item[@"note"] ?: @"", [NSFont systemFontOfSize:11], NSColor.secondaryLabelColor);
     subtitle.lineBreakMode = NSLineBreakByTruncatingTail;
     subtitle.maximumNumberOfLines = 1;
 
-    NSStackView *textStack = [NSStackView stackViewWithViews:@[title, subtitle]];
+    NSString *workspace = [item[@"workspace_path"] lastPathComponent];
+    if (workspace.length == 0) {
+        workspace = item[@"workspace_path"] ?: @"";
+    }
+    NSString *metadataText = [NSString stringWithFormat:@"%@  ·  %@",
+                              workspace,
+                              [self displayDate:item[@"created_at"]]];
+    NSTextField *metadata = APLabel(metadataText, [NSFont systemFontOfSize:10], NSColor.tertiaryLabelColor);
+    metadata.lineBreakMode = NSLineBreakByTruncatingMiddle;
+    metadata.maximumNumberOfLines = 1;
+
+    NSStackView *textStack = [NSStackView stackViewWithViews:@[title, subtitle, metadata]];
     textStack.orientation = NSUserInterfaceLayoutOrientationVertical;
     textStack.alignment = NSLayoutAttributeLeading;
-    textStack.spacing = 4;
+    textStack.spacing = 2;
     textStack.translatesAutoresizingMaskIntoConstraints = NO;
 
     NSString *identifier = item[@"id"] ?: @"";
-    NSButton *edit = APIconButton(@"pencil", @"编辑", self, @selector(editClicked:));
+    NSButton *edit = APIconButton(@"pencil", APText(@"edit"), self, @selector(editClicked:));
     edit.identifier = identifier;
-    NSButton *complete = APIconButton(@"checkmark.circle", @"完成并归档", self, @selector(completeClicked:));
+    NSButton *complete = APIconButton(@"checkmark.circle", APText(@"complete"), self, @selector(completeClicked:));
     complete.identifier = identifier;
 
     [row addSubview:textStack];
     [row addSubview:edit];
     [row addSubview:complete];
     [NSLayoutConstraint activateConstraints:@[
-        [row.heightAnchor constraintEqualToConstant:62],
+        [row.heightAnchor constraintEqualToConstant:74],
         [textStack.leadingAnchor constraintEqualToAnchor:row.leadingAnchor constant:14],
         [textStack.centerYAnchor constraintEqualToAnchor:row.centerYAnchor],
         [edit.leadingAnchor constraintGreaterThanOrEqualToAnchor:textStack.trailingAnchor constant:8],
@@ -272,8 +323,9 @@ static NSButton *APIconButton(NSString *symbol, NSString *toolTip, id target, SE
         return rawDate;
     }
     NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
-    formatter.locale = [NSLocale localeWithLocaleIdentifier:@"zh_CN"];
-    formatter.dateFormat = @"M月d日 HH:mm";
+    BOOL english = [APLanguage() isEqualToString:@"en"];
+    formatter.locale = [NSLocale localeWithLocaleIdentifier:(english ? @"en_US_POSIX" : @"zh_CN")];
+    formatter.dateFormat = english ? @"MMM d, HH:mm" : @"M月d日 HH:mm";
     return [formatter stringFromDate:date];
 }
 
@@ -304,11 +356,7 @@ static NSButton *APIconButton(NSString *symbol, NSString *toolTip, id target, SE
     [notificationCenter requestAuthorizationWithOptions:(UNAuthorizationOptionAlert | UNAuthorizationOptionSound)
                                        completionHandler:^(__unused BOOL granted, __unused NSError *error) {}];
 
-    self.pendingController = [[PendingViewController alloc] initWithDelegate:self];
-    self.popover = [[NSPopover alloc] init];
-    self.popover.behavior = NSPopoverBehaviorTransient;
-    self.popover.contentViewController = self.pendingController;
-    self.popover.contentSize = NSMakeSize(380, 220);
+    [self rebuildLocalizedInterface];
 
     self.statusItem = [NSStatusBar.systemStatusBar statusItemWithLength:NSVariableStatusItemLength];
     NSStatusBarButton *button = self.statusItem.button;
@@ -317,30 +365,76 @@ static NSButton *APIconButton(NSString *symbol, NSString *toolTip, id target, SE
     button.action = @selector(statusItemClicked:);
     [button sendActionOn:(NSEventMaskLeftMouseUp | NSEventMaskRightMouseUp)];
 
-    self.statusMenu = [[NSMenu alloc] initWithTitle:@"Agent Pending"];
-    NSMenuItem *showItem = [[NSMenuItem alloc] initWithTitle:@"显示待确认列表"
-                                                     action:@selector(showListFromMenu:)
-                                              keyEquivalent:@""];
-    showItem.target = self;
-    [self.statusMenu addItem:showItem];
-    [self.statusMenu addItem:NSMenuItem.separatorItem];
-    NSMenuItem *restartItem = [[NSMenuItem alloc] initWithTitle:@"重启 Agent Pending"
-                                                        action:@selector(restartApplication:)
-                                                 keyEquivalent:@""];
-    restartItem.target = self;
-    [self.statusMenu addItem:restartItem];
-    NSMenuItem *quitItem = [[NSMenuItem alloc] initWithTitle:@"退出 Agent Pending"
-                                                     action:@selector(quitApplicationFromMenu:)
-                                              keyEquivalent:@""];
-    quitItem.target = self;
-    [self.statusMenu addItem:quitItem];
-
     [self refreshAndNotify:NO];
     self.refreshTimer = [NSTimer scheduledTimerWithTimeInterval:1.0
                                                         target:self
                                                       selector:@selector(refreshTimerFired:)
                                                       userInfo:nil
                                                        repeats:YES];
+
+    if ([NSProcessInfo.processInfo.environment[@"AGENT_PENDING_OPEN_ON_LAUNCH"] isEqualToString:@"1"]) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [self showListFromMenu:nil];
+        });
+    }
+}
+
+- (void)rebuildLocalizedInterface {
+    BOOL wasShown = self.popover.shown;
+    [self.popover performClose:nil];
+
+    self.pendingController = [[PendingViewController alloc] initWithDelegate:self];
+    self.popover = [[NSPopover alloc] init];
+    self.popover.behavior = NSPopoverBehaviorTransient;
+    self.popover.contentViewController = self.pendingController;
+    self.popover.contentSize = NSMakeSize(380, 220);
+    [self.pendingController updateItems:self.items];
+
+    self.statusMenu = [[NSMenu alloc] initWithTitle:@"Agent Pending"];
+    NSMenuItem *showItem = [[NSMenuItem alloc] initWithTitle:APText(@"show_list")
+                                                     action:@selector(showListFromMenu:)
+                                              keyEquivalent:@""];
+    showItem.target = self;
+    [self.statusMenu addItem:showItem];
+
+    NSMenu *languageMenu = [[NSMenu alloc] initWithTitle:APText(@"language")];
+    for (NSArray<NSString *> *choice in @[@[@"zh", @"中文"], @[@"en", @"English"]]) {
+        NSMenuItem *languageItem = [[NSMenuItem alloc] initWithTitle:choice[1]
+                                                             action:@selector(changeLanguage:)
+                                                      keyEquivalent:@""];
+        languageItem.target = self;
+        languageItem.representedObject = choice[0];
+        languageItem.state = [APLanguage() isEqualToString:choice[0]] ? NSControlStateValueOn : NSControlStateValueOff;
+        [languageMenu addItem:languageItem];
+    }
+    NSMenuItem *languageRoot = [[NSMenuItem alloc] initWithTitle:APText(@"language") action:nil keyEquivalent:@""];
+    languageRoot.submenu = languageMenu;
+    [self.statusMenu addItem:languageRoot];
+    [self.statusMenu addItem:NSMenuItem.separatorItem];
+
+    NSMenuItem *restartItem = [[NSMenuItem alloc] initWithTitle:APText(@"restart")
+                                                        action:@selector(restartApplication:)
+                                                 keyEquivalent:@""];
+    restartItem.target = self;
+    [self.statusMenu addItem:restartItem];
+    NSMenuItem *quitItem = [[NSMenuItem alloc] initWithTitle:APText(@"quit_app")
+                                                     action:@selector(quitApplicationFromMenu:)
+                                              keyEquivalent:@""];
+    quitItem.target = self;
+    [self.statusMenu addItem:quitItem];
+
+    if (wasShown && self.statusItem.button) {
+        [self showListFromMenu:nil];
+    }
+}
+
+- (void)changeLanguage:(NSMenuItem *)sender {
+    NSString *language = sender.representedObject;
+    if (![language isEqualToString:@"zh"] && ![language isEqualToString:@"en"]) {
+        return;
+    }
+    [NSUserDefaults.standardUserDefaults setObject:language forKey:@"AgentPendingLanguage"];
+    [self rebuildLocalizedInterface];
 }
 
 - (void)applicationWillTerminate:(NSNotification *)notification {
@@ -439,7 +533,7 @@ static NSButton *APIconButton(NSString *symbol, NSString *toolTip, id target, SE
 
 - (void)sendNotificationForItem:(NSDictionary *)item {
     UNMutableNotificationContent *content = [[UNMutableNotificationContent alloc] init];
-    content.title = item[@"title"] ?: @"新的待确认事项";
+    content.title = item[@"title"] ?: APText(@"new_item");
     content.body = item[@"note"] ?: @"";
     content.sound = UNNotificationSound.defaultSound;
     UNNotificationRequest *request = [UNNotificationRequest requestWithIdentifier:item[@"id"] ?: NSUUID.UUID.UUIDString
@@ -455,16 +549,16 @@ static NSButton *APIconButton(NSString *symbol, NSString *toolTip, id target, SE
     }
 
     NSAlert *alert = [[NSAlert alloc] init];
-    alert.messageText = @"编辑待确认事项";
-    [alert addButtonWithTitle:@"保存"];
-    [alert addButtonWithTitle:@"取消"];
+    alert.messageText = APText(@"edit_item");
+    [alert addButtonWithTitle:APText(@"save")];
+    [alert addButtonWithTitle:APText(@"cancel")];
 
     NSTextField *titleField = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 340, 24)];
     titleField.stringValue = item[@"title"] ?: @"";
-    titleField.placeholderString = @"项目 / 事项";
+    titleField.placeholderString = APText(@"item_placeholder");
     NSTextField *noteField = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 340, 24)];
     noteField.stringValue = item[@"note"] ?: @"";
-    noteField.placeholderString = @"等待你处理的一句话";
+    noteField.placeholderString = APText(@"note_placeholder");
     NSTextField *pathLabel = APLabel(item[@"workspace_path"] ?: @"", [NSFont monospacedSystemFontOfSize:10 weight:NSFontWeightRegular], NSColor.secondaryLabelColor);
     pathLabel.maximumNumberOfLines = 2;
 
