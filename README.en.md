@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/agent-pending-zh.png" width="452" alt="Agent Pending running in Chinese">
+  <img src="docs/images/agent-pending-zh.png" width="420" alt="Agent Pending running in Chinese">
 </p>
 
 Agent Pending collects human next actions scattered across terminals, repositories, and conversations into one local menu-bar list. An item may be an approval, an unfinished task, a follow-up, or a wish. The common property is that it still belongs to you and the agent cannot complete it autonomously.
@@ -20,8 +20,9 @@ It is not a project manager, and it never discovers tasks automatically. An agen
 ## Features
 
 - A persistent menu-bar count; left-click to open or close the compact list.
-- Each row shows a title, one next action, the workspace name, and capture time. Hover to see the full workspace path.
-- Edit an item in the app, or complete it and move it to the archive.
+- Each row shows a title, one next action, the workspace name, and capture time. Copy the full workspace path with one click.
+- Edit the title, pending action, and workspace in the app, or complete the item and move it to the archive.
+- Native macOS materials, system typography, and dynamic system colors adapt to light and dark appearances.
 - Add, list, archive, and restore through the CLI. Identical additions are idempotent by default.
 - One macOS notification when the app detects a new item.
 - Chinese and English UI. Chinese is the default; switch language from the right-click menu.

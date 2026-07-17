@@ -45,7 +45,7 @@ class PublicRepositoryTests(unittest.TestCase):
         with (ROOT / "Resources" / "Info.plist").open("rb") as source:
             info = plistlib.load(source)
         self.assertEqual("io.github.georgedu.agent-pending", info["CFBundleIdentifier"])
-        self.assertEqual("0.1.0", info["CFBundleShortVersionString"])
+        self.assertEqual("0.1.1", info["CFBundleShortVersionString"])
 
     def test_skill_is_explicit_only(self):
         metadata = (ROOT / "skill" / "agent-pending" / "agents" / "openai.yaml").read_text(
@@ -122,16 +122,32 @@ class PublicRepositoryTests(unittest.TestCase):
     def test_app_has_chinese_default_and_english_ui(self):
         source = (ROOT / "src" / "AgentPendingApp.m").read_text(encoding="utf-8")
         self.assertIn('return [saved isEqualToString:@"en"] ? @"en" : @"zh";', source)
-        self.assertIn('@"zh": @"待确认"', source)
-        self.assertIn('@"en": @"Pending"', source)
+        self.assertIn('@"zh": @"待处理"', source)
+        self.assertIn('@"en": @"Action Items"', source)
         self.assertIn('@selector(changeLanguage:)', source)
 
     def test_app_supports_gui_add_and_outside_click_dismissal(self):
         source = (ROOT / "src" / "AgentPendingApp.m").read_text(encoding="utf-8")
-        self.assertIn('APIconButton(@"plus"', source)
+        self.assertIn("APAddButton", source)
         self.assertIn("- (void)addItem", source)
         self.assertIn("applicationDidResignActive", source)
         self.assertIn("activateIgnoringOtherApps", source)
+
+    def test_app_has_full_editor_workspace_copy_and_native_mac_palette(self):
+        source = (ROOT / "src" / "AgentPendingApp.m").read_text(encoding="utf-8")
+        self.assertIn("APEditorForm", source)
+        self.assertIn("NSTextView *noteView", source)
+        self.assertIn('candidate[@"workspace_path"] = workspace;', source)
+        self.assertIn('APIconButton(@"doc.on.doc"', source)
+        self.assertIn("NSPasteboard.generalPasteboard", source)
+        self.assertIn("NSVisualEffectMaterialHeaderView", source)
+        self.assertIn("NSColor.systemIndigoColor", source)
+        self.assertIn("NSColor.systemTealColor", source)
+        self.assertIn("NSColor.systemPurpleColor", source)
+        self.assertIn("NSColor.controlBackgroundColor", source)
+        self.assertIn("row.layer.shadowOpacity", source)
+        self.assertNotIn("APLogoOrange", source)
+        self.assertNotIn("NSColor.systemBlueColor", source)
 
     def test_default_build_app_is_hidden_from_launchpad(self):
         build = (ROOT / "scripts" / "build.sh").read_text(encoding="utf-8")

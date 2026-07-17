@@ -39,25 +39,30 @@ static NSString *APText(NSString *key) {
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
         strings = @{
-            @"title": @{@"zh": @"待确认", @"en": @"Pending"},
+            @"title": @{@"zh": @"待处理", @"en": @"Action Items"},
             @"empty": @{@"zh": @"✓  没有待处理事项", @"en": @"✓  Nothing pending"},
             @"footer": @{@"zh": @"点击 + 新增，或调用 $agent-pending", @"en": @"Use + or $agent-pending to add"},
             @"quit": @{@"zh": @"退出", @"en": @"Quit"},
             @"add": @{@"zh": @"新增", @"en": @"Add"},
             @"edit": @{@"zh": @"编辑", @"en": @"Edit"},
             @"complete": @{@"zh": @"完成并归档", @"en": @"Complete and archive"},
-            @"show_list": @{@"zh": @"显示待确认列表", @"en": @"Show pending list"},
+            @"show_list": @{@"zh": @"显示待处理事项", @"en": @"Show action items"},
             @"language": @{@"zh": @"语言", @"en": @"Language"},
             @"restart": @{@"zh": @"重启 Agent Pending", @"en": @"Restart Agent Pending"},
             @"quit_app": @{@"zh": @"退出 Agent Pending", @"en": @"Quit Agent Pending"},
-            @"new_item": @{@"zh": @"新的待确认事项", @"en": @"New pending item"},
-            @"add_item": @{@"zh": @"新增待确认事项", @"en": @"Add pending item"},
-            @"edit_item": @{@"zh": @"编辑待确认事项", @"en": @"Edit pending item"},
+            @"new_item": @{@"zh": @"新的待处理事项", @"en": @"New action item"},
+            @"add_item": @{@"zh": @"新增待处理事项", @"en": @"Add action item"},
+            @"edit_item": @{@"zh": @"编辑待处理事项", @"en": @"Edit action item"},
             @"save": @{@"zh": @"保存", @"en": @"Save"},
             @"cancel": @{@"zh": @"取消", @"en": @"Cancel"},
             @"item_placeholder": @{@"zh": @"项目 / 事项", @"en": @"Project / item"},
             @"note_placeholder": @{@"zh": @"等待你处理的一句话", @"en": @"One action that still needs you"},
             @"workspace_placeholder": @{@"zh": @"工作区绝对路径", @"en": @"Absolute workspace path"},
+            @"title_label": @{@"zh": @"标题", @"en": @"Title"},
+            @"note_label": @{@"zh": @"待处理内容", @"en": @"Pending action"},
+            @"workspace_label": @{@"zh": @"工作目录", @"en": @"Workspace"},
+            @"copy_workspace": @{@"zh": @"复制工作目录", @"en": @"Copy workspace"},
+            @"workspace_copied": @{@"zh": @"已复制工作目录", @"en": @"Workspace copied"},
         };
     });
     return strings[key][APLanguage()] ?: key;
@@ -115,15 +120,108 @@ static NSTextField *APLabel(NSString *text, NSFont *font, NSColor *color) {
 }
 
 static NSButton *APIconButton(NSString *symbol, NSString *toolTip, id target, SEL action) {
-    NSButton *button = [NSButton buttonWithImage:[NSImage imageWithSystemSymbolName:symbol accessibilityDescription:toolTip]
+    NSImage *image = [NSImage imageWithSystemSymbolName:symbol accessibilityDescription:toolTip];
+    NSImageSymbolConfiguration *configuration = [NSImageSymbolConfiguration configurationWithPointSize:16 weight:NSFontWeightMedium];
+    image = [image imageWithSymbolConfiguration:configuration];
+    NSButton *button = [NSButton buttonWithImage:image
                                           target:target
                                           action:action];
     button.bordered = NO;
     button.toolTip = toolTip;
     button.translatesAutoresizingMaskIntoConstraints = NO;
-    [button.widthAnchor constraintEqualToConstant:24].active = YES;
-    [button.heightAnchor constraintEqualToConstant:24].active = YES;
+    [button.widthAnchor constraintEqualToConstant:30].active = YES;
+    [button.heightAnchor constraintEqualToConstant:30].active = YES;
     return button;
+}
+
+static NSButton *APAddButton(NSString *toolTip, id target, SEL action) {
+    NSImage *image = [NSImage imageWithSystemSymbolName:@"plus" accessibilityDescription:toolTip];
+    NSImageSymbolConfiguration *configuration = [NSImageSymbolConfiguration configurationWithPointSize:24 weight:NSFontWeightSemibold];
+    image = [image imageWithSymbolConfiguration:configuration];
+    NSButton *button = [NSButton buttonWithImage:image target:target action:action];
+    button.bordered = YES;
+    button.bezelStyle = NSBezelStyleCircular;
+    button.contentTintColor = NSColor.systemIndigoColor;
+    button.toolTip = toolTip;
+    button.translatesAutoresizingMaskIntoConstraints = NO;
+    [button.widthAnchor constraintEqualToConstant:36].active = YES;
+    [button.heightAnchor constraintEqualToConstant:36].active = YES;
+    return button;
+}
+
+static NSTextField *APEditorField(NSString *value, NSString *placeholder) {
+    NSTextField *field = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 420, 32)];
+    field.font = [NSFont systemFontOfSize:14];
+    field.stringValue = value ?: @"";
+    field.placeholderString = placeholder;
+    return field;
+}
+
+static NSView *APEditorForm(
+    NSDictionary *item,
+    NSTextField **titleFieldResult,
+    NSTextView **noteViewResult,
+    NSTextField **workspaceFieldResult
+) {
+    const CGFloat width = 420;
+    NSView *form = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, width, 246)];
+
+    NSTextField *titleLabel = APLabel(APText(@"title_label"), [NSFont systemFontOfSize:12 weight:NSFontWeightMedium], NSColor.secondaryLabelColor);
+    titleLabel.translatesAutoresizingMaskIntoConstraints = YES;
+    titleLabel.frame = NSMakeRect(0, 225, width, 18);
+    NSTextField *titleField = APEditorField(item[@"title"], APText(@"item_placeholder"));
+    titleField.frame = NSMakeRect(0, 188, width, 32);
+
+    NSTextField *noteLabel = APLabel(APText(@"note_label"), [NSFont systemFontOfSize:12 weight:NSFontWeightMedium], NSColor.secondaryLabelColor);
+    noteLabel.translatesAutoresizingMaskIntoConstraints = YES;
+    noteLabel.frame = NSMakeRect(0, 162, width, 18);
+    NSScrollView *noteScroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 72, width, 84)];
+    noteScroll.borderType = NSBezelBorder;
+    noteScroll.hasVerticalScroller = YES;
+    noteScroll.autohidesScrollers = YES;
+    noteScroll.drawsBackground = YES;
+    NSTextView *noteView = [[NSTextView alloc] initWithFrame:NSMakeRect(0, 0, width, 84)];
+    noteView.font = [NSFont systemFontOfSize:14];
+    noteView.string = item[@"note"] ?: @"";
+    noteView.textContainerInset = NSMakeSize(5, 5);
+    noteView.minSize = NSMakeSize(0, 84);
+    noteView.maxSize = NSMakeSize(CGFLOAT_MAX, CGFLOAT_MAX);
+    noteView.verticallyResizable = YES;
+    noteView.horizontallyResizable = NO;
+    noteView.autoresizingMask = NSViewWidthSizable;
+    noteView.textContainer.widthTracksTextView = YES;
+    noteScroll.documentView = noteView;
+
+    NSTextField *workspaceLabel = APLabel(APText(@"workspace_label"), [NSFont systemFontOfSize:12 weight:NSFontWeightMedium], NSColor.secondaryLabelColor);
+    workspaceLabel.translatesAutoresizingMaskIntoConstraints = YES;
+    workspaceLabel.frame = NSMakeRect(0, 45, width, 18);
+    NSString *workspace = item[@"workspace_path"] ?: NSHomeDirectory();
+    NSTextField *workspaceField = APEditorField(workspace, APText(@"workspace_placeholder"));
+    workspaceField.font = [NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightRegular];
+    workspaceField.frame = NSMakeRect(0, 8, width, 32);
+
+    [form addSubview:titleLabel];
+    [form addSubview:titleField];
+    [form addSubview:noteLabel];
+    [form addSubview:noteScroll];
+    [form addSubview:workspaceLabel];
+    [form addSubview:workspaceField];
+    *titleFieldResult = titleField;
+    *noteViewResult = noteView;
+    *workspaceFieldResult = workspaceField;
+    return form;
+}
+
+static NSString *APNormalizedWorkspace(NSString *value) {
+    NSString *workspace = [value stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if (workspace.length == 0) {
+        workspace = NSHomeDirectory();
+    }
+    workspace = workspace.stringByExpandingTildeInPath.stringByStandardizingPath;
+    if (![workspace hasPrefix:@"/"]) {
+        workspace = [NSHomeDirectory() stringByAppendingPathComponent:workspace];
+    }
+    return workspace;
 }
 
 @implementation PendingViewController
@@ -138,57 +236,69 @@ static NSButton *APIconButton(NSString *symbol, NSString *toolTip, id target, SE
 }
 
 - (void)loadView {
-    NSView *root = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 380, 220)];
+    NSView *root = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 420, 270)];
     self.view = root;
 
-    NSTextField *title = APLabel(APText(@"title"), [NSFont systemFontOfSize:15 weight:NSFontWeightSemibold], NSColor.labelColor);
-    self.countLabel = APLabel(APCountText(0), [NSFont systemFontOfSize:11], NSColor.secondaryLabelColor);
+    NSTextField *title = APLabel(APText(@"title"), [NSFont systemFontOfSize:18 weight:NSFontWeightSemibold], NSColor.labelColor);
+    self.countLabel = APLabel(APCountText(0), [NSFont systemFontOfSize:12 weight:NSFontWeightMedium], NSColor.secondaryLabelColor);
+    self.countLabel.alignment = NSTextAlignmentCenter;
+    self.countLabel.drawsBackground = YES;
+    self.countLabel.backgroundColor = [NSColor.controlBackgroundColor colorWithAlphaComponent:0.82];
+    self.countLabel.textColor = NSColor.secondaryLabelColor;
+    self.countLabel.wantsLayer = YES;
+    self.countLabel.layer.cornerRadius = 8;
+    [self.countLabel.widthAnchor constraintGreaterThanOrEqualToConstant:44].active = YES;
+    [self.countLabel.heightAnchor constraintEqualToConstant:20].active = YES;
     NSStackView *headerText = [NSStackView stackViewWithViews:@[title, self.countLabel]];
     headerText.orientation = NSUserInterfaceLayoutOrientationVertical;
     headerText.alignment = NSLayoutAttributeLeading;
     headerText.spacing = 2;
     headerText.translatesAutoresizingMaskIntoConstraints = NO;
 
-    NSView *header = [[NSView alloc] init];
+    NSVisualEffectView *header = [[NSVisualEffectView alloc] init];
     header.translatesAutoresizingMaskIntoConstraints = NO;
-    NSButton *addButton = APIconButton(@"plus", APText(@"add"), self, @selector(addClicked:));
+    header.material = NSVisualEffectMaterialHeaderView;
+    header.blendingMode = NSVisualEffectBlendingModeWithinWindow;
+    header.state = NSVisualEffectStateFollowsWindowActiveState;
+    NSButton *addButton = APAddButton(APText(@"add"), self, @selector(addClicked:));
     [header addSubview:headerText];
     [header addSubview:addButton];
     [NSLayoutConstraint activateConstraints:@[
-        [headerText.leadingAnchor constraintEqualToAnchor:header.leadingAnchor constant:14],
+        [headerText.leadingAnchor constraintEqualToAnchor:header.leadingAnchor constant:18],
         [headerText.centerYAnchor constraintEqualToAnchor:header.centerYAnchor],
-        [addButton.trailingAnchor constraintEqualToAnchor:header.trailingAnchor constant:-14],
+        [addButton.trailingAnchor constraintEqualToAnchor:header.trailingAnchor constant:-18],
         [addButton.centerYAnchor constraintEqualToAnchor:header.centerYAnchor],
-        [header.heightAnchor constraintEqualToConstant:52],
+        [header.heightAnchor constraintEqualToConstant:64],
     ]];
 
     self.itemStack = [[NSStackView alloc] init];
     self.itemStack.orientation = NSUserInterfaceLayoutOrientationVertical;
     self.itemStack.alignment = NSLayoutAttributeLeading;
-    self.itemStack.spacing = 0;
+    self.itemStack.spacing = 12;
     self.itemStack.translatesAutoresizingMaskIntoConstraints = NO;
 
     NSView *documentView = [[NSView alloc] init];
     documentView.translatesAutoresizingMaskIntoConstraints = NO;
     [documentView addSubview:self.itemStack];
     [NSLayoutConstraint activateConstraints:@[
-        [self.itemStack.topAnchor constraintEqualToAnchor:documentView.topAnchor],
-        [self.itemStack.leadingAnchor constraintEqualToAnchor:documentView.leadingAnchor],
-        [self.itemStack.trailingAnchor constraintEqualToAnchor:documentView.trailingAnchor],
-        [self.itemStack.bottomAnchor constraintEqualToAnchor:documentView.bottomAnchor],
+        [self.itemStack.topAnchor constraintEqualToAnchor:documentView.topAnchor constant:14],
+        [self.itemStack.leadingAnchor constraintEqualToAnchor:documentView.leadingAnchor constant:14],
+        [self.itemStack.trailingAnchor constraintEqualToAnchor:documentView.trailingAnchor constant:-14],
+        [self.itemStack.bottomAnchor constraintEqualToAnchor:documentView.bottomAnchor constant:-14],
     ]];
 
     self.scrollView = [[NSScrollView alloc] init];
     self.scrollView.translatesAutoresizingMaskIntoConstraints = NO;
     self.scrollView.hasVerticalScroller = YES;
-    self.scrollView.drawsBackground = NO;
+    self.scrollView.drawsBackground = YES;
+    self.scrollView.backgroundColor = NSColor.windowBackgroundColor;
     self.scrollView.documentView = documentView;
     [documentView.widthAnchor constraintEqualToAnchor:self.scrollView.contentView.widthAnchor].active = YES;
 
-    NSTextField *footerText = APLabel(APText(@"footer"), [NSFont systemFontOfSize:10], NSColor.secondaryLabelColor);
+    NSTextField *footerText = APLabel(APText(@"footer"), [NSFont systemFontOfSize:12], NSColor.secondaryLabelColor);
     NSButton *quitButton = [NSButton buttonWithTitle:APText(@"quit") target:self action:@selector(quitClicked:)];
     quitButton.bordered = NO;
-    quitButton.font = [NSFont systemFontOfSize:11];
+    quitButton.font = [NSFont systemFontOfSize:12];
     quitButton.contentTintColor = NSColor.secondaryLabelColor;
     quitButton.translatesAutoresizingMaskIntoConstraints = NO;
 
@@ -197,10 +307,10 @@ static NSButton *APIconButton(NSString *symbol, NSString *toolTip, id target, SE
     [footer addSubview:footerText];
     [footer addSubview:quitButton];
     [NSLayoutConstraint activateConstraints:@[
-        [footer.heightAnchor constraintEqualToConstant:40],
-        [footerText.leadingAnchor constraintEqualToAnchor:footer.leadingAnchor constant:14],
+        [footer.heightAnchor constraintEqualToConstant:46],
+        [footerText.leadingAnchor constraintEqualToAnchor:footer.leadingAnchor constant:18],
         [footerText.centerYAnchor constraintEqualToAnchor:footer.centerYAnchor],
-        [quitButton.trailingAnchor constraintEqualToAnchor:footer.trailingAnchor constant:-14],
+        [quitButton.trailingAnchor constraintEqualToAnchor:footer.trailingAnchor constant:-18],
         [quitButton.centerYAnchor constraintEqualToAnchor:footer.centerYAnchor],
     ]];
 
@@ -250,10 +360,10 @@ static NSButton *APIconButton(NSString *symbol, NSString *toolTip, id target, SE
     if (self.items.count == 0) {
         NSView *empty = [[NSView alloc] init];
         empty.translatesAutoresizingMaskIntoConstraints = NO;
-        NSTextField *emptyLabel = APLabel(APText(@"empty"), [NSFont systemFontOfSize:13], NSColor.secondaryLabelColor);
+        NSTextField *emptyLabel = APLabel(APText(@"empty"), [NSFont systemFontOfSize:14 weight:NSFontWeightMedium], NSColor.secondaryLabelColor);
         [empty addSubview:emptyLabel];
         [NSLayoutConstraint activateConstraints:@[
-            [empty.heightAnchor constraintEqualToConstant:126],
+            [empty.heightAnchor constraintEqualToConstant:130],
             [emptyLabel.centerXAnchor constraintEqualToAnchor:empty.centerXAnchor],
             [emptyLabel.centerYAnchor constraintEqualToAnchor:empty.centerYAnchor],
         ]];
@@ -267,20 +377,40 @@ static NSButton *APIconButton(NSString *symbol, NSString *toolTip, id target, SE
         }
     }
 
-    CGFloat height = self.items.count == 0 ? 220 : MIN(620, 94 + self.items.count * 74);
-    self.preferredContentSize = NSMakeSize(380, height);
+    CGFloat height = self.items.count == 0 ? 270 : MIN(680, 128 + self.items.count * 108);
+    self.preferredContentSize = NSMakeSize(420, height);
 }
 
 - (NSView *)rowForItem:(NSDictionary *)item {
-    NSView *row = [[NSView alloc] init];
+    NSBox *row = [[NSBox alloc] init];
     row.translatesAutoresizingMaskIntoConstraints = NO;
     row.toolTip = item[@"workspace_path"] ?: @"";
+    row.boxType = NSBoxCustom;
+    row.titlePosition = NSNoTitle;
+    row.cornerRadius = 10;
+    row.borderWidth = 0.5;
+    row.borderColor = NSColor.separatorColor;
+    row.fillColor = NSColor.controlBackgroundColor;
+    row.wantsLayer = YES;
+    row.layer.masksToBounds = NO;
+    row.layer.shadowColor = NSColor.blackColor.CGColor;
+    row.layer.shadowOpacity = 0.2;
+    row.layer.shadowRadius = 8;
+    row.layer.shadowOffset = NSMakeSize(0, -3);
 
-    NSTextField *title = APLabel(item[@"title"] ?: @"", [NSFont systemFontOfSize:13 weight:NSFontWeightSemibold], NSColor.labelColor);
+    NSBox *accent = [[NSBox alloc] init];
+    accent.translatesAutoresizingMaskIntoConstraints = NO;
+    accent.boxType = NSBoxCustom;
+    accent.titlePosition = NSNoTitle;
+    accent.cornerRadius = 1.5;
+    accent.borderWidth = 0;
+    accent.fillColor = NSColor.systemIndigoColor;
+
+    NSTextField *title = APLabel(item[@"title"] ?: @"", [NSFont systemFontOfSize:15 weight:NSFontWeightSemibold], NSColor.labelColor);
     title.lineBreakMode = NSLineBreakByTruncatingTail;
     title.maximumNumberOfLines = 1;
 
-    NSTextField *subtitle = APLabel(item[@"note"] ?: @"", [NSFont systemFontOfSize:11], NSColor.secondaryLabelColor);
+    NSTextField *subtitle = APLabel(item[@"note"] ?: @"", [NSFont systemFontOfSize:13], NSColor.secondaryLabelColor);
     subtitle.lineBreakMode = NSLineBreakByTruncatingTail;
     subtitle.maximumNumberOfLines = 1;
 
@@ -291,33 +421,46 @@ static NSButton *APIconButton(NSString *symbol, NSString *toolTip, id target, SE
     NSString *metadataText = [NSString stringWithFormat:@"%@  ·  %@",
                               workspace,
                               [self displayDate:item[@"created_at"]]];
-    NSTextField *metadata = APLabel(metadataText, [NSFont systemFontOfSize:10], NSColor.tertiaryLabelColor);
+    NSTextField *metadata = APLabel(metadataText, [NSFont systemFontOfSize:11], NSColor.tertiaryLabelColor);
     metadata.lineBreakMode = NSLineBreakByTruncatingMiddle;
     metadata.maximumNumberOfLines = 1;
 
     NSStackView *textStack = [NSStackView stackViewWithViews:@[title, subtitle, metadata]];
     textStack.orientation = NSUserInterfaceLayoutOrientationVertical;
     textStack.alignment = NSLayoutAttributeLeading;
-    textStack.spacing = 2;
+    textStack.spacing = 3;
     textStack.translatesAutoresizingMaskIntoConstraints = NO;
 
     NSString *identifier = item[@"id"] ?: @"";
+    NSButton *copy = APIconButton(@"doc.on.doc", APText(@"copy_workspace"), self, @selector(copyWorkspaceClicked:));
+    copy.identifier = identifier;
+    copy.contentTintColor = NSColor.systemTealColor;
     NSButton *edit = APIconButton(@"pencil", APText(@"edit"), self, @selector(editClicked:));
     edit.identifier = identifier;
-    NSButton *complete = APIconButton(@"checkmark.circle", APText(@"complete"), self, @selector(completeClicked:));
+    edit.contentTintColor = NSColor.systemPurpleColor;
+    NSButton *complete = APIconButton(@"checkmark.circle.fill", APText(@"complete"), self, @selector(completeClicked:));
     complete.identifier = identifier;
+    complete.contentTintColor = NSColor.systemIndigoColor;
 
+    [row addSubview:accent];
     [row addSubview:textStack];
+    [row addSubview:copy];
     [row addSubview:edit];
     [row addSubview:complete];
     [NSLayoutConstraint activateConstraints:@[
-        [row.heightAnchor constraintEqualToConstant:74],
-        [textStack.leadingAnchor constraintEqualToAnchor:row.leadingAnchor constant:14],
+        [row.heightAnchor constraintEqualToConstant:96],
+        [accent.leadingAnchor constraintEqualToAnchor:row.leadingAnchor],
+        [accent.topAnchor constraintEqualToAnchor:row.topAnchor constant:10],
+        [accent.bottomAnchor constraintEqualToAnchor:row.bottomAnchor constant:-10],
+        [accent.widthAnchor constraintEqualToConstant:3],
+        [textStack.leadingAnchor constraintEqualToAnchor:row.leadingAnchor constant:18],
         [textStack.centerYAnchor constraintEqualToAnchor:row.centerYAnchor],
-        [edit.leadingAnchor constraintGreaterThanOrEqualToAnchor:textStack.trailingAnchor constant:8],
+        [copy.leadingAnchor constraintGreaterThanOrEqualToAnchor:textStack.trailingAnchor constant:8],
+        [copy.centerYAnchor constraintEqualToAnchor:row.centerYAnchor],
+        [edit.leadingAnchor constraintEqualToAnchor:copy.trailingAnchor constant:6],
         [edit.centerYAnchor constraintEqualToAnchor:row.centerYAnchor],
-        [complete.leadingAnchor constraintEqualToAnchor:edit.trailingAnchor constant:5],
-        [complete.trailingAnchor constraintEqualToAnchor:row.trailingAnchor constant:-12],
+        [complete.leadingAnchor constraintEqualToAnchor:edit.trailingAnchor constant:6],
+        [complete.trailingAnchor constraintEqualToAnchor:row.trailingAnchor constant:-14],
         [complete.centerYAnchor constraintEqualToAnchor:row.centerYAnchor],
     ]];
     return row;
@@ -341,6 +484,34 @@ static NSButton *APIconButton(NSString *symbol, NSString *toolTip, id target, SE
 
 - (void)editClicked:(NSButton *)sender {
     [self.delegate editItemWithIdentifier:sender.identifier];
+}
+
+- (void)copyWorkspaceClicked:(NSButton *)sender {
+    NSString *workspace = nil;
+    for (NSDictionary *item in self.items) {
+        if ([item[@"id"] isEqualToString:sender.identifier]) {
+            workspace = item[@"workspace_path"];
+            break;
+        }
+    }
+    if (workspace.length == 0) {
+        NSBeep();
+        return;
+    }
+    NSPasteboard *pasteboard = NSPasteboard.generalPasteboard;
+    [pasteboard clearContents];
+    if (![pasteboard setString:workspace forType:NSPasteboardTypeString]) {
+        NSBeep();
+        return;
+    }
+    sender.image = [NSImage imageWithSystemSymbolName:@"checkmark" accessibilityDescription:APText(@"workspace_copied")];
+    sender.toolTip = APText(@"workspace_copied");
+    sender.contentTintColor = NSColor.systemTealColor;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        sender.image = [NSImage imageWithSystemSymbolName:@"doc.on.doc" accessibilityDescription:APText(@"copy_workspace")];
+        sender.toolTip = APText(@"copy_workspace");
+        sender.contentTintColor = NSColor.systemTealColor;
+    });
 }
 
 - (void)addClicked:(id)sender {
@@ -438,7 +609,7 @@ static NSButton *APIconButton(NSString *symbol, NSString *toolTip, id target, SE
     self.popover = [[NSPopover alloc] init];
     self.popover.behavior = NSPopoverBehaviorTransient;
     self.popover.contentViewController = self.pendingController;
-    self.popover.contentSize = NSMakeSize(380, 220);
+    self.popover.contentSize = NSMakeSize(420, 270);
     [self.pendingController updateItems:self.items];
 
     self.statusMenu = [[NSMenu alloc] initWithTitle:@"Agent Pending"];
@@ -609,39 +780,23 @@ static NSButton *APIconButton(NSString *symbol, NSString *toolTip, id target, SE
     [alert addButtonWithTitle:APText(@"add")];
     [alert addButtonWithTitle:APText(@"cancel")];
 
-    NSTextField *titleField = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 340, 24)];
-    titleField.placeholderString = APText(@"item_placeholder");
-    NSTextField *noteField = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 340, 24)];
-    noteField.placeholderString = APText(@"note_placeholder");
-    NSTextField *workspaceField = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 340, 24)];
-    workspaceField.font = [NSFont monospacedSystemFontOfSize:11 weight:NSFontWeightRegular];
-    workspaceField.placeholderString = APText(@"workspace_placeholder");
-    workspaceField.stringValue = NSHomeDirectory();
-
-    NSStackView *fields = [NSStackView stackViewWithViews:@[titleField, noteField, workspaceField]];
-    fields.orientation = NSUserInterfaceLayoutOrientationVertical;
-    fields.spacing = 8;
-    fields.frame = NSMakeRect(0, 0, 340, 88);
-    alert.accessoryView = fields;
+    NSTextField *titleField = nil;
+    NSTextView *noteView = nil;
+    NSTextField *workspaceField = nil;
+    alert.accessoryView = APEditorForm(nil, &titleField, &noteView, &workspaceField);
+    alert.window.initialFirstResponder = titleField;
 
     [NSApp activateIgnoringOtherApps:YES];
     if ([alert runModal] != NSAlertFirstButtonReturn) {
         return;
     }
     NSString *title = [titleField.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    NSString *note = [noteField.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    NSString *workspace = [workspaceField.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    NSString *note = [noteView.string stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if (title.length == 0 || note.length == 0) {
         NSBeep();
         return;
     }
-    if (workspace.length == 0) {
-        workspace = NSHomeDirectory();
-    }
-    workspace = workspace.stringByExpandingTildeInPath.stringByStandardizingPath;
-    if (![workspace hasPrefix:@"/"]) {
-        workspace = [NSHomeDirectory() stringByAppendingPathComponent:workspace];
-    }
+    NSString *workspace = APNormalizedWorkspace(workspaceField.stringValue);
 
     NSISO8601DateFormatter *formatter = [[NSISO8601DateFormatter alloc] init];
     NSMutableDictionary *newItem = [@{
@@ -674,26 +829,18 @@ static NSButton *APIconButton(NSString *symbol, NSString *toolTip, id target, SE
     [alert addButtonWithTitle:APText(@"save")];
     [alert addButtonWithTitle:APText(@"cancel")];
 
-    NSTextField *titleField = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 340, 24)];
-    titleField.stringValue = item[@"title"] ?: @"";
-    titleField.placeholderString = APText(@"item_placeholder");
-    NSTextField *noteField = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 340, 24)];
-    noteField.stringValue = item[@"note"] ?: @"";
-    noteField.placeholderString = APText(@"note_placeholder");
-    NSTextField *pathLabel = APLabel(item[@"workspace_path"] ?: @"", [NSFont monospacedSystemFontOfSize:10 weight:NSFontWeightRegular], NSColor.secondaryLabelColor);
-    pathLabel.maximumNumberOfLines = 2;
-
-    NSStackView *fields = [NSStackView stackViewWithViews:@[titleField, noteField, pathLabel]];
-    fields.orientation = NSUserInterfaceLayoutOrientationVertical;
-    fields.spacing = 8;
-    fields.frame = NSMakeRect(0, 0, 340, 82);
-    alert.accessoryView = fields;
+    NSTextField *titleField = nil;
+    NSTextView *noteView = nil;
+    NSTextField *workspaceField = nil;
+    alert.accessoryView = APEditorForm(item, &titleField, &noteView, &workspaceField);
+    alert.window.initialFirstResponder = titleField;
 
     if ([alert runModal] != NSAlertFirstButtonReturn) {
         return;
     }
     NSString *title = [titleField.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    NSString *note = [noteField.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    NSString *note = [noteView.string stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    NSString *workspace = APNormalizedWorkspace(workspaceField.stringValue);
     if (title.length == 0 || note.length == 0) {
         return;
     }
@@ -703,6 +850,7 @@ static NSButton *APIconButton(NSString *symbol, NSString *toolTip, id target, SE
             if ([candidate[@"id"] isEqualToString:identifier]) {
                 candidate[@"title"] = title;
                 candidate[@"note"] = note;
+                candidate[@"workspace_path"] = workspace;
                 break;
             }
         }
