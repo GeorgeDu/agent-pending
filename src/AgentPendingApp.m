@@ -4,6 +4,8 @@
 #import <sys/file.h>
 #import <unistd.h>
 
+static NSPasteboardType const APPendingRowPasteboardType = @"io.github.georgedu.agent-pending.row";
+
 static NSString *APDataDirectory(void) {
     NSString *override = NSProcessInfo.processInfo.environment[@"AGENT_PENDING_DATA_DIR"];
     if (override.length > 0) {
@@ -41,7 +43,7 @@ static NSString *APText(NSString *key) {
         strings = @{
             @"title": @{@"zh": @"待处理", @"en": @"Action Items"},
             @"empty": @{@"zh": @"✓  没有待处理事项", @"en": @"✓  Nothing pending"},
-            @"footer": @{@"zh": @"点击 + 新增，或调用 $agent-pending", @"en": @"Use + or $agent-pending to add"},
+            @"footer": @{@"zh": @"拖动排序 · + 新增 · $agent-pending", @"en": @"Drag to reorder · + · $agent-pending"},
             @"quit": @{@"zh": @"退出", @"en": @"Quit"},
             @"add": @{@"zh": @"新增", @"en": @"Add"},
             @"edit": @{@"zh": @"编辑", @"en": @"Edit"},
@@ -61,6 +63,14 @@ static NSString *APText(NSString *key) {
             @"title_label": @{@"zh": @"标题", @"en": @"Title"},
             @"note_label": @{@"zh": @"待处理内容", @"en": @"Pending action"},
             @"workspace_label": @{@"zh": @"工作目录", @"en": @"Workspace"},
+            @"priority_label": @{@"zh": @"重要程度", @"en": @"Importance"},
+            @"priority_high": @{@"zh": @"高", @"en": @"High"},
+            @"priority_medium": @{@"zh": @"中", @"en": @"Medium"},
+            @"priority_low": @{@"zh": @"低", @"en": @"Low"},
+            @"drag_reorder": @{@"zh": @"拖动调整处理顺序", @"en": @"Drag to change processing order"},
+            @"move_top": @{@"zh": @"置顶", @"en": @"Move to Top"},
+            @"move_up": @{@"zh": @"上移", @"en": @"Move Up"},
+            @"move_down": @{@"zh": @"下移", @"en": @"Move Down"},
             @"copy_workspace": @{@"zh": @"复制工作目录", @"en": @"Copy workspace"},
             @"workspace_copied": @{@"zh": @"已复制工作目录", @"en": @"Workspace copied"},
         };
@@ -79,17 +89,22 @@ static NSString *APCountText(NSUInteger count) {
 - (void)addItem;
 - (void)editItemWithIdentifier:(NSString *)identifier;
 - (void)completeItemWithIdentifier:(NSString *)identifier;
+- (void)reorderItemsWithIdentifiers:(NSArray<NSString *> *)identifiers;
 - (void)quitApplication;
 @end
 
-@interface PendingViewController : NSViewController
+@interface PendingViewController : NSViewController <NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate>
 @property(nonatomic, weak) id<PendingControllerDelegate> delegate;
 @property(nonatomic, copy) NSArray<NSDictionary *> *items;
 @property(nonatomic, strong) NSTextField *countLabel;
 @property(nonatomic, strong) NSScrollView *scrollView;
-@property(nonatomic, strong) NSStackView *itemStack;
+@property(nonatomic, strong) NSTableView *tableView;
+@property(nonatomic, strong) NSTableColumn *itemColumn;
+@property(nonatomic, strong) NSTextField *emptyLabel;
+@property(nonatomic, assign) CGFloat contentWidth;
 - (instancetype)initWithDelegate:(id<PendingControllerDelegate>)delegate;
 - (void)updateItems:(NSArray<NSDictionary *> *)items;
+- (void)updateContentWidthForScreen:(NSScreen *)screen;
 @end
 
 @interface AppDelegate : NSObject <NSApplicationDelegate, PendingControllerDelegate, UNUserNotificationCenterDelegate>
@@ -119,6 +134,102 @@ static NSTextField *APLabel(NSString *text, NSFont *font, NSColor *color) {
     return label;
 }
 
+static CGFloat APPreferredPopoverWidth(NSScreen *screen) {
+    CGFloat screenWidth = screen ? NSWidth(screen.visibleFrame) : 1728;
+    return round(MIN(640, MAX(520, screenWidth * 0.30)));
+}
+
+static NSString *APNormalizedPriority(id value) {
+    if ([value isKindOfClass:NSString.class] &&
+        ([(NSString *)value isEqualToString:@"high"] ||
+         [(NSString *)value isEqualToString:@"low"])) {
+        return value;
+    }
+    return @"medium";
+}
+
+static NSColor *APTechGrayColor(void) {
+    static NSColor *color;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        color = [NSColor colorWithName:@"AgentPendingTechGray" dynamicProvider:^NSColor *(NSAppearance *appearance) {
+            NSAppearanceName match = [appearance bestMatchFromAppearancesWithNames:@[
+                NSAppearanceNameAqua,
+                NSAppearanceNameDarkAqua,
+            ]];
+            if ([match isEqualToString:NSAppearanceNameDarkAqua]) {
+                return [NSColor colorWithSRGBRed:0.84 green:0.85 blue:0.87 alpha:1.0];
+            }
+            return [NSColor colorWithSRGBRed:0.24 green:0.26 blue:0.29 alpha:1.0];
+        }];
+    });
+    return color;
+}
+
+static CGFloat APPriorityOpacity(NSString *priority) {
+    if ([priority isEqualToString:@"high"]) {
+        return 1.00;
+    }
+    if ([priority isEqualToString:@"low"]) {
+        return 0.40;
+    }
+    return 0.70;
+}
+
+static NSColor *APPriorityColor(NSString *priority) {
+    return [APTechGrayColor() colorWithAlphaComponent:APPriorityOpacity(priority)];
+}
+
+static NSInteger APPositionForItem(NSDictionary *item, NSInteger fallback) {
+    id value = item[@"position"];
+    if ([value isKindOfClass:NSNumber.class] && [value integerValue] >= 0) {
+        return [value integerValue];
+    }
+    return fallback;
+}
+
+static NSArray<NSMutableDictionary *> *APOrderedPendingCopies(NSArray<NSDictionary *> *items) {
+    NSMutableArray<NSMutableDictionary *> *ordered = [NSMutableArray array];
+    [items enumerateObjectsUsingBlock:^(NSDictionary *item, NSUInteger index, __unused BOOL *stop) {
+        NSMutableDictionary *candidate = [item mutableCopy];
+        candidate[@"priority"] = APNormalizedPriority(candidate[@"priority"]);
+        candidate[@"position"] = @(APPositionForItem(candidate, (NSInteger)index));
+        candidate[@"_ap_fallback_index"] = @(index);
+        [ordered addObject:candidate];
+    }];
+    [ordered sortUsingComparator:^NSComparisonResult(NSDictionary *left, NSDictionary *right) {
+        NSComparisonResult byPosition = [left[@"position"] compare:right[@"position"]];
+        if (byPosition != NSOrderedSame) {
+            return byPosition;
+        }
+        return [left[@"_ap_fallback_index"] compare:right[@"_ap_fallback_index"]];
+    }];
+    for (NSMutableDictionary *candidate in ordered) {
+        [candidate removeObjectForKey:@"_ap_fallback_index"];
+    }
+    return ordered;
+}
+
+static NSString *APPriorityForSegment(NSInteger segment) {
+    if (segment == 0) {
+        return @"high";
+    }
+    if (segment == 2) {
+        return @"low";
+    }
+    return @"medium";
+}
+
+static NSInteger APSegmentForPriority(NSString *priority) {
+    if ([priority isEqualToString:@"high"]) {
+        return 0;
+    }
+    if ([priority isEqualToString:@"low"]) {
+        return 2;
+    }
+    return 1;
+}
+
 static NSButton *APIconButton(NSString *symbol, NSString *toolTip, id target, SEL action) {
     NSImage *image = [NSImage imageWithSystemSymbolName:symbol accessibilityDescription:toolTip];
     NSImageSymbolConfiguration *configuration = [NSImageSymbolConfiguration configurationWithPointSize:16 weight:NSFontWeightMedium];
@@ -141,7 +252,7 @@ static NSButton *APAddButton(NSString *toolTip, id target, SEL action) {
     NSButton *button = [NSButton buttonWithImage:image target:target action:action];
     button.bordered = YES;
     button.bezelStyle = NSBezelStyleCircular;
-    button.contentTintColor = NSColor.systemIndigoColor;
+    button.contentTintColor = APTechGrayColor();
     button.toolTip = toolTip;
     button.translatesAutoresizingMaskIntoConstraints = NO;
     [button.widthAnchor constraintEqualToConstant:36].active = YES;
@@ -161,21 +272,32 @@ static NSView *APEditorForm(
     NSDictionary *item,
     NSTextField **titleFieldResult,
     NSTextView **noteViewResult,
-    NSTextField **workspaceFieldResult
+    NSTextField **workspaceFieldResult,
+    NSSegmentedControl **priorityControlResult
 ) {
     const CGFloat width = 420;
-    NSView *form = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, width, 246)];
+    NSView *form = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, width, 310)];
 
     NSTextField *titleLabel = APLabel(APText(@"title_label"), [NSFont systemFontOfSize:12 weight:NSFontWeightMedium], NSColor.secondaryLabelColor);
     titleLabel.translatesAutoresizingMaskIntoConstraints = YES;
-    titleLabel.frame = NSMakeRect(0, 225, width, 18);
+    titleLabel.frame = NSMakeRect(0, 289, width, 18);
     NSTextField *titleField = APEditorField(item[@"title"], APText(@"item_placeholder"));
-    titleField.frame = NSMakeRect(0, 188, width, 32);
+    titleField.frame = NSMakeRect(0, 252, width, 32);
+
+    NSTextField *priorityLabel = APLabel(APText(@"priority_label"), [NSFont systemFontOfSize:12 weight:NSFontWeightMedium], NSColor.secondaryLabelColor);
+    priorityLabel.translatesAutoresizingMaskIntoConstraints = YES;
+    priorityLabel.frame = NSMakeRect(0, 226, width, 18);
+    NSSegmentedControl *priorityControl = [NSSegmentedControl segmentedControlWithLabels:@[
+        APText(@"priority_high"), APText(@"priority_medium"), APText(@"priority_low")
+    ] trackingMode:NSSegmentSwitchTrackingSelectOne target:nil action:nil];
+    priorityControl.frame = NSMakeRect(0, 190, width, 32);
+    priorityControl.selectedSegment = APSegmentForPriority(APNormalizedPriority(item[@"priority"]));
+    priorityControl.font = [NSFont systemFontOfSize:13 weight:NSFontWeightMedium];
 
     NSTextField *noteLabel = APLabel(APText(@"note_label"), [NSFont systemFontOfSize:12 weight:NSFontWeightMedium], NSColor.secondaryLabelColor);
     noteLabel.translatesAutoresizingMaskIntoConstraints = YES;
-    noteLabel.frame = NSMakeRect(0, 162, width, 18);
-    NSScrollView *noteScroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 72, width, 84)];
+    noteLabel.frame = NSMakeRect(0, 164, width, 18);
+    NSScrollView *noteScroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 74, width, 84)];
     noteScroll.borderType = NSBezelBorder;
     noteScroll.hasVerticalScroller = YES;
     noteScroll.autohidesScrollers = YES;
@@ -194,14 +316,16 @@ static NSView *APEditorForm(
 
     NSTextField *workspaceLabel = APLabel(APText(@"workspace_label"), [NSFont systemFontOfSize:12 weight:NSFontWeightMedium], NSColor.secondaryLabelColor);
     workspaceLabel.translatesAutoresizingMaskIntoConstraints = YES;
-    workspaceLabel.frame = NSMakeRect(0, 45, width, 18);
+    workspaceLabel.frame = NSMakeRect(0, 47, width, 18);
     NSString *workspace = item[@"workspace_path"] ?: NSHomeDirectory();
     NSTextField *workspaceField = APEditorField(workspace, APText(@"workspace_placeholder"));
     workspaceField.font = [NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightRegular];
-    workspaceField.frame = NSMakeRect(0, 8, width, 32);
+    workspaceField.frame = NSMakeRect(0, 10, width, 32);
 
     [form addSubview:titleLabel];
     [form addSubview:titleField];
+    [form addSubview:priorityLabel];
+    [form addSubview:priorityControl];
     [form addSubview:noteLabel];
     [form addSubview:noteScroll];
     [form addSubview:workspaceLabel];
@@ -209,6 +333,7 @@ static NSView *APEditorForm(
     *titleFieldResult = titleField;
     *noteViewResult = noteView;
     *workspaceFieldResult = workspaceField;
+    *priorityControlResult = priorityControl;
     return form;
 }
 
@@ -231,12 +356,13 @@ static NSString *APNormalizedWorkspace(NSString *value) {
     if (self) {
         _delegate = delegate;
         _items = @[];
+        _contentWidth = APPreferredPopoverWidth(NSScreen.mainScreen);
     }
     return self;
 }
 
 - (void)loadView {
-    NSView *root = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 420, 270)];
+    NSView *root = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, self.contentWidth, 270)];
     self.view = root;
 
     NSTextField *title = APLabel(APText(@"title"), [NSFont systemFontOfSize:18 weight:NSFontWeightSemibold], NSColor.labelColor);
@@ -271,29 +397,48 @@ static NSString *APNormalizedWorkspace(NSString *value) {
         [header.heightAnchor constraintEqualToConstant:64],
     ]];
 
-    self.itemStack = [[NSStackView alloc] init];
-    self.itemStack.orientation = NSUserInterfaceLayoutOrientationVertical;
-    self.itemStack.alignment = NSLayoutAttributeLeading;
-    self.itemStack.spacing = 12;
-    self.itemStack.translatesAutoresizingMaskIntoConstraints = NO;
+    self.tableView = [[NSTableView alloc] init];
+    self.itemColumn = [[NSTableColumn alloc] initWithIdentifier:@"pending-item"];
+    self.itemColumn.resizingMask = NSTableColumnAutoresizingMask;
+    self.itemColumn.width = self.contentWidth;
+    [self.tableView addTableColumn:self.itemColumn];
+    self.tableView.columnAutoresizingStyle = NSTableViewUniformColumnAutoresizingStyle;
+    self.tableView.headerView = nil;
+    self.tableView.dataSource = self;
+    self.tableView.delegate = self;
+    self.tableView.rowHeight = 108;
+    self.tableView.intercellSpacing = NSMakeSize(0, 0);
+    self.tableView.selectionHighlightStyle = NSTableViewSelectionHighlightStyleNone;
+    self.tableView.backgroundColor = NSColor.clearColor;
+    self.tableView.gridStyleMask = NSTableViewGridNone;
+    [self.tableView registerForDraggedTypes:@[APPendingRowPasteboardType]];
+    [self.tableView setDraggingSourceOperationMask:NSDragOperationMove forLocal:YES];
 
-    NSView *documentView = [[NSView alloc] init];
-    documentView.translatesAutoresizingMaskIntoConstraints = NO;
-    [documentView addSubview:self.itemStack];
-    [NSLayoutConstraint activateConstraints:@[
-        [self.itemStack.topAnchor constraintEqualToAnchor:documentView.topAnchor constant:14],
-        [self.itemStack.leadingAnchor constraintEqualToAnchor:documentView.leadingAnchor constant:14],
-        [self.itemStack.trailingAnchor constraintEqualToAnchor:documentView.trailingAnchor constant:-14],
-        [self.itemStack.bottomAnchor constraintEqualToAnchor:documentView.bottomAnchor constant:-14],
-    ]];
+    NSMenu *rowMenu = [[NSMenu alloc] initWithTitle:@""];
+    rowMenu.delegate = self;
+    for (NSDictionary *definition in @[
+        @{@"title": APText(@"move_top"), @"action": NSStringFromSelector(@selector(moveTopClicked:))},
+        @{@"title": APText(@"move_up"), @"action": NSStringFromSelector(@selector(moveUpClicked:))},
+        @{@"title": APText(@"move_down"), @"action": NSStringFromSelector(@selector(moveDownClicked:))},
+    ]) {
+        NSMenuItem *menuItem = [[NSMenuItem alloc] initWithTitle:definition[@"title"]
+                                                        action:NSSelectorFromString(definition[@"action"])
+                                                 keyEquivalent:@""];
+        menuItem.target = self;
+        [rowMenu addItem:menuItem];
+    }
+    self.tableView.menu = rowMenu;
 
     self.scrollView = [[NSScrollView alloc] init];
     self.scrollView.translatesAutoresizingMaskIntoConstraints = NO;
     self.scrollView.hasVerticalScroller = YES;
     self.scrollView.drawsBackground = YES;
     self.scrollView.backgroundColor = NSColor.windowBackgroundColor;
-    self.scrollView.documentView = documentView;
-    [documentView.widthAnchor constraintEqualToAnchor:self.scrollView.contentView.widthAnchor].active = YES;
+    self.scrollView.autohidesScrollers = YES;
+    self.scrollView.documentView = self.tableView;
+
+    self.emptyLabel = APLabel(APText(@"empty"), [NSFont systemFontOfSize:14 weight:NSFontWeightMedium], NSColor.secondaryLabelColor);
+    self.emptyLabel.hidden = NO;
 
     NSTextField *footerText = APLabel(APText(@"footer"), [NSFont systemFontOfSize:12], NSColor.secondaryLabelColor);
     NSButton *quitButton = [NSButton buttonWithTitle:APText(@"quit") target:self action:@selector(quitClicked:)];
@@ -324,6 +469,7 @@ static NSString *APNormalizedWorkspace(NSString *value) {
     [root addSubview:header];
     [root addSubview:topDivider];
     [root addSubview:self.scrollView];
+    [root addSubview:self.emptyLabel];
     [root addSubview:bottomDivider];
     [root addSubview:footer];
     [NSLayoutConstraint activateConstraints:@[
@@ -336,6 +482,8 @@ static NSString *APNormalizedWorkspace(NSString *value) {
         [self.scrollView.topAnchor constraintEqualToAnchor:topDivider.bottomAnchor],
         [self.scrollView.leadingAnchor constraintEqualToAnchor:root.leadingAnchor],
         [self.scrollView.trailingAnchor constraintEqualToAnchor:root.trailingAnchor],
+        [self.emptyLabel.centerXAnchor constraintEqualToAnchor:self.scrollView.centerXAnchor],
+        [self.emptyLabel.centerYAnchor constraintEqualToAnchor:self.scrollView.centerYAnchor],
         [bottomDivider.topAnchor constraintEqualToAnchor:self.scrollView.bottomAnchor],
         [bottomDivider.leadingAnchor constraintEqualToAnchor:root.leadingAnchor],
         [bottomDivider.trailingAnchor constraintEqualToAnchor:root.trailingAnchor],
@@ -347,41 +495,38 @@ static NSString *APNormalizedWorkspace(NSString *value) {
 }
 
 - (void)updateItems:(NSArray<NSDictionary *> *)items {
-    self.items = items ?: @[];
+    NSArray<NSDictionary *> *latest = items ?: @[];
+    BOOL changed = ![self.items isEqualToArray:latest];
+    self.items = latest;
     if (!self.isViewLoaded) {
         return;
     }
     self.countLabel.stringValue = APCountText(self.items.count);
-    for (NSView *view in [self.itemStack.arrangedSubviews copy]) {
-        [self.itemStack removeArrangedSubview:view];
-        [view removeFromSuperview];
-    }
-
-    if (self.items.count == 0) {
-        NSView *empty = [[NSView alloc] init];
-        empty.translatesAutoresizingMaskIntoConstraints = NO;
-        NSTextField *emptyLabel = APLabel(APText(@"empty"), [NSFont systemFontOfSize:14 weight:NSFontWeightMedium], NSColor.secondaryLabelColor);
-        [empty addSubview:emptyLabel];
-        [NSLayoutConstraint activateConstraints:@[
-            [empty.heightAnchor constraintEqualToConstant:130],
-            [emptyLabel.centerXAnchor constraintEqualToAnchor:empty.centerXAnchor],
-            [emptyLabel.centerYAnchor constraintEqualToAnchor:empty.centerYAnchor],
-        ]];
-        [self.itemStack addArrangedSubview:empty];
-        [empty.widthAnchor constraintEqualToAnchor:self.itemStack.widthAnchor].active = YES;
-    } else {
-        for (NSDictionary *item in self.items) {
-            NSView *row = [self rowForItem:item];
-            [self.itemStack addArrangedSubview:row];
-            [row.widthAnchor constraintEqualToAnchor:self.itemStack.widthAnchor].active = YES;
-        }
+    self.emptyLabel.hidden = self.items.count != 0;
+    if (changed) {
+        [self.tableView reloadData];
     }
 
     CGFloat height = self.items.count == 0 ? 270 : MIN(680, 128 + self.items.count * 108);
-    self.preferredContentSize = NSMakeSize(420, height);
+    self.preferredContentSize = NSMakeSize(self.contentWidth, height);
+}
+
+- (void)updateContentWidthForScreen:(NSScreen *)screen {
+    CGFloat width = APPreferredPopoverWidth(screen);
+    if (fabs(width - self.contentWidth) < 0.5) {
+        return;
+    }
+    self.contentWidth = width;
+    if (!self.isViewLoaded) {
+        return;
+    }
+    self.itemColumn.width = width;
+    CGFloat height = self.items.count == 0 ? 270 : MIN(680, 128 + self.items.count * 108);
+    self.preferredContentSize = NSMakeSize(width, height);
 }
 
 - (NSView *)rowForItem:(NSDictionary *)item {
+    NSView *container = [[NSView alloc] init];
     NSBox *row = [[NSBox alloc] init];
     row.translatesAutoresizingMaskIntoConstraints = NO;
     row.toolTip = item[@"workspace_path"] ?: @"";
@@ -404,7 +549,19 @@ static NSString *APNormalizedWorkspace(NSString *value) {
     accent.titlePosition = NSNoTitle;
     accent.cornerRadius = 1.5;
     accent.borderWidth = 0;
-    accent.fillColor = NSColor.systemIndigoColor;
+    NSString *priority = APNormalizedPriority(item[@"priority"]);
+    NSColor *priorityColor = APPriorityColor(priority);
+    accent.fillColor = priorityColor;
+
+    NSImage *dragImage = [NSImage imageWithSystemSymbolName:@"line.3.horizontal"
+                                  accessibilityDescription:APText(@"drag_reorder")];
+    NSImageSymbolConfiguration *dragConfiguration = [NSImageSymbolConfiguration configurationWithPointSize:12 weight:NSFontWeightMedium];
+    dragImage = [dragImage imageWithSymbolConfiguration:dragConfiguration];
+    NSImageView *dragHandle = [[NSImageView alloc] initWithFrame:NSZeroRect];
+    dragHandle.image = dragImage;
+    dragHandle.translatesAutoresizingMaskIntoConstraints = NO;
+    dragHandle.contentTintColor = priorityColor;
+    dragHandle.toolTip = APText(@"drag_reorder");
 
     NSTextField *title = APLabel(item[@"title"] ?: @"", [NSFont systemFontOfSize:15 weight:NSFontWeightSemibold], NSColor.labelColor);
     title.lineBreakMode = NSLineBreakByTruncatingTail;
@@ -434,26 +591,35 @@ static NSString *APNormalizedWorkspace(NSString *value) {
     NSString *identifier = item[@"id"] ?: @"";
     NSButton *copy = APIconButton(@"doc.on.doc", APText(@"copy_workspace"), self, @selector(copyWorkspaceClicked:));
     copy.identifier = identifier;
-    copy.contentTintColor = NSColor.systemTealColor;
+    copy.contentTintColor = priorityColor;
     NSButton *edit = APIconButton(@"pencil", APText(@"edit"), self, @selector(editClicked:));
     edit.identifier = identifier;
-    edit.contentTintColor = NSColor.systemPurpleColor;
+    edit.contentTintColor = priorityColor;
     NSButton *complete = APIconButton(@"checkmark.circle.fill", APText(@"complete"), self, @selector(completeClicked:));
     complete.identifier = identifier;
-    complete.contentTintColor = NSColor.systemIndigoColor;
+    complete.contentTintColor = priorityColor;
 
+    [container addSubview:row];
+    [row addSubview:dragHandle];
     [row addSubview:accent];
     [row addSubview:textStack];
     [row addSubview:copy];
     [row addSubview:edit];
     [row addSubview:complete];
     [NSLayoutConstraint activateConstraints:@[
+        [row.leadingAnchor constraintEqualToAnchor:container.leadingAnchor constant:14],
+        [row.trailingAnchor constraintEqualToAnchor:container.trailingAnchor constant:-28],
+        [row.topAnchor constraintEqualToAnchor:container.topAnchor constant:6],
+        [row.bottomAnchor constraintEqualToAnchor:container.bottomAnchor constant:-6],
         [row.heightAnchor constraintEqualToConstant:96],
-        [accent.leadingAnchor constraintEqualToAnchor:row.leadingAnchor],
+        [dragHandle.leadingAnchor constraintEqualToAnchor:row.leadingAnchor constant:9],
+        [dragHandle.centerYAnchor constraintEqualToAnchor:row.centerYAnchor],
+        [dragHandle.widthAnchor constraintEqualToConstant:14],
+        [accent.leadingAnchor constraintEqualToAnchor:row.leadingAnchor constant:29],
         [accent.topAnchor constraintEqualToAnchor:row.topAnchor constant:10],
         [accent.bottomAnchor constraintEqualToAnchor:row.bottomAnchor constant:-10],
         [accent.widthAnchor constraintEqualToConstant:3],
-        [textStack.leadingAnchor constraintEqualToAnchor:row.leadingAnchor constant:18],
+        [textStack.leadingAnchor constraintEqualToAnchor:accent.trailingAnchor constant:14],
         [textStack.centerYAnchor constraintEqualToAnchor:row.centerYAnchor],
         [copy.leadingAnchor constraintGreaterThanOrEqualToAnchor:textStack.trailingAnchor constant:8],
         [copy.centerYAnchor constraintEqualToAnchor:row.centerYAnchor],
@@ -463,7 +629,119 @@ static NSString *APNormalizedWorkspace(NSString *value) {
         [complete.trailingAnchor constraintEqualToAnchor:row.trailingAnchor constant:-14],
         [complete.centerYAnchor constraintEqualToAnchor:row.centerYAnchor],
     ]];
-    return row;
+    return container;
+}
+
+- (NSInteger)numberOfRowsInTableView:(__unused NSTableView *)tableView {
+    return (NSInteger)self.items.count;
+}
+
+- (NSView *)tableView:(__unused NSTableView *)tableView
+   viewForTableColumn:(__unused NSTableColumn *)tableColumn
+                  row:(NSInteger)row {
+    if (row < 0 || row >= (NSInteger)self.items.count) {
+        return nil;
+    }
+    return [self rowForItem:self.items[(NSUInteger)row]];
+}
+
+- (id<NSPasteboardWriting>)tableView:(__unused NSTableView *)tableView
+              pasteboardWriterForRow:(NSInteger)row {
+    if (row < 0 || row >= (NSInteger)self.items.count) {
+        return nil;
+    }
+    NSPasteboardItem *pasteboardItem = [[NSPasteboardItem alloc] init];
+    [pasteboardItem setString:self.items[(NSUInteger)row][@"id"] ?: @""
+                      forType:APPendingRowPasteboardType];
+    return pasteboardItem;
+}
+
+- (NSDragOperation)tableView:(NSTableView *)tableView
+                validateDrop:(id<NSDraggingInfo>)info
+                 proposedRow:(NSInteger)row
+       proposedDropOperation:(__unused NSTableViewDropOperation)dropOperation {
+    NSString *identifier = [info.draggingPasteboard stringForType:APPendingRowPasteboardType];
+    if (identifier.length == 0 || info.draggingSource != tableView) {
+        return NSDragOperationNone;
+    }
+    [tableView setDropRow:row dropOperation:NSTableViewDropAbove];
+    return NSDragOperationMove;
+}
+
+- (BOOL)tableView:(__unused NSTableView *)tableView
+        acceptDrop:(id<NSDraggingInfo>)info
+               row:(NSInteger)row
+     dropOperation:(__unused NSTableViewDropOperation)dropOperation {
+    NSString *identifier = [info.draggingPasteboard stringForType:APPendingRowPasteboardType];
+    NSInteger source = [self.items indexOfObjectPassingTest:^BOOL(
+        NSDictionary *candidate,
+        __unused NSUInteger index,
+        __unused BOOL *stop
+    ) {
+        return [candidate[@"id"] isEqualToString:identifier];
+    }];
+    if (source == NSNotFound) {
+        return NO;
+    }
+    NSInteger destination = row;
+    if (source < destination) {
+        destination -= 1;
+    }
+    destination = MAX(0, MIN(destination, (NSInteger)self.items.count - 1));
+    return [self moveItemFromIndex:source toIndex:destination];
+}
+
+- (BOOL)moveItemFromIndex:(NSInteger)source toIndex:(NSInteger)destination {
+    if (source < 0 || source >= (NSInteger)self.items.count ||
+        destination < 0 || destination >= (NSInteger)self.items.count ||
+        source == destination) {
+        return source == destination;
+    }
+    NSMutableArray<NSDictionary *> *reordered = [self.items mutableCopy];
+    NSDictionary *item = reordered[(NSUInteger)source];
+    [reordered removeObjectAtIndex:(NSUInteger)source];
+    [reordered insertObject:item atIndex:(NSUInteger)destination];
+    self.items = [reordered copy];
+    [self.tableView reloadData];
+
+    NSMutableArray<NSString *> *identifiers = [NSMutableArray arrayWithCapacity:self.items.count];
+    for (NSDictionary *candidate in self.items) {
+        NSString *identifier = candidate[@"id"];
+        if (identifier.length > 0) {
+            [identifiers addObject:identifier];
+        }
+    }
+    [self.delegate reorderItemsWithIdentifiers:identifiers];
+    return YES;
+}
+
+- (NSInteger)contextRow {
+    NSInteger row = self.tableView.clickedRow;
+    return row >= 0 ? row : self.tableView.selectedRow;
+}
+
+- (void)menuWillOpen:(NSMenu *)menu {
+    NSInteger row = [self contextRow];
+    BOOL valid = row >= 0 && row < (NSInteger)self.items.count;
+    if (menu.numberOfItems >= 3) {
+        [menu itemAtIndex:0].enabled = valid && row > 0;
+        [menu itemAtIndex:1].enabled = valid && row > 0;
+        [menu itemAtIndex:2].enabled = valid && row < (NSInteger)self.items.count - 1;
+    }
+}
+
+- (void)moveTopClicked:(__unused id)sender {
+    [self moveItemFromIndex:[self contextRow] toIndex:0];
+}
+
+- (void)moveUpClicked:(__unused id)sender {
+    NSInteger row = [self contextRow];
+    [self moveItemFromIndex:row toIndex:row - 1];
+}
+
+- (void)moveDownClicked:(__unused id)sender {
+    NSInteger row = [self contextRow];
+    [self moveItemFromIndex:row toIndex:row + 1];
 }
 
 - (NSString *)displayDate:(NSString *)rawDate {
@@ -488,9 +766,11 @@ static NSString *APNormalizedWorkspace(NSString *value) {
 
 - (void)copyWorkspaceClicked:(NSButton *)sender {
     NSString *workspace = nil;
+    NSColor *priorityColor = APTechGrayColor();
     for (NSDictionary *item in self.items) {
         if ([item[@"id"] isEqualToString:sender.identifier]) {
             workspace = item[@"workspace_path"];
+            priorityColor = APPriorityColor(APNormalizedPriority(item[@"priority"]));
             break;
         }
     }
@@ -506,11 +786,11 @@ static NSString *APNormalizedWorkspace(NSString *value) {
     }
     sender.image = [NSImage imageWithSystemSymbolName:@"checkmark" accessibilityDescription:APText(@"workspace_copied")];
     sender.toolTip = APText(@"workspace_copied");
-    sender.contentTintColor = NSColor.systemTealColor;
+    sender.contentTintColor = priorityColor;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         sender.image = [NSImage imageWithSystemSymbolName:@"doc.on.doc" accessibilityDescription:APText(@"copy_workspace")];
         sender.toolTip = APText(@"copy_workspace");
-        sender.contentTintColor = NSColor.systemTealColor;
+        sender.contentTintColor = priorityColor;
     });
 }
 
@@ -575,6 +855,7 @@ static NSString *APNormalizedWorkspace(NSString *value) {
         return;
     }
 
+    [self.pendingController updateContentWidthForScreen:screen];
     (void)self.pendingController.view;
     [self.pendingController updateItems:self.items];
     NSSize popoverSize = self.pendingController.preferredContentSize;
@@ -687,6 +968,8 @@ static NSString *APNormalizedWorkspace(NSString *value) {
         [self.popover performClose:nil];
         return;
     }
+    NSScreen *screen = self.statusItem.button.window.screen ?: NSScreen.mainScreen;
+    [self.pendingController updateContentWidthForScreen:screen];
     [self.pendingController updateItems:self.items];
     [NSApp activateIgnoringOtherApps:YES];
     [self.popover showRelativeToRect:self.statusItem.button.bounds
@@ -696,6 +979,8 @@ static NSString *APNormalizedWorkspace(NSString *value) {
 
 - (void)showListFromMenu:(id)sender {
     if (!self.popover.shown) {
+        NSScreen *screen = self.statusItem.button.window.screen ?: NSScreen.mainScreen;
+        [self.pendingController updateContentWidthForScreen:screen];
         [self.pendingController updateItems:self.items];
         [NSApp activateIgnoringOtherApps:YES];
         [self.popover showRelativeToRect:self.statusItem.button.bounds
@@ -783,7 +1068,8 @@ static NSString *APNormalizedWorkspace(NSString *value) {
     NSTextField *titleField = nil;
     NSTextView *noteView = nil;
     NSTextField *workspaceField = nil;
-    alert.accessoryView = APEditorForm(nil, &titleField, &noteView, &workspaceField);
+    NSSegmentedControl *priorityControl = nil;
+    alert.accessoryView = APEditorForm(nil, &titleField, &noteView, &workspaceField, &priorityControl);
     alert.window.initialFirstResponder = titleField;
 
     [NSApp activateIgnoringOtherApps:YES];
@@ -797,6 +1083,11 @@ static NSString *APNormalizedWorkspace(NSString *value) {
         return;
     }
     NSString *workspace = APNormalizedWorkspace(workspaceField.stringValue);
+    NSString *priority = APPriorityForSegment(priorityControl.selectedSegment);
+    NSInteger nextPosition = 0;
+    for (NSDictionary *candidate in self.items) {
+        nextPosition = MAX(nextPosition, APPositionForItem(candidate, nextPosition) + 1);
+    }
 
     NSISO8601DateFormatter *formatter = [[NSISO8601DateFormatter alloc] init];
     NSMutableDictionary *newItem = [@{
@@ -805,6 +1096,8 @@ static NSString *APNormalizedWorkspace(NSString *value) {
         @"note": note,
         @"workspace_path": workspace,
         @"created_at": [formatter stringFromDate:NSDate.date],
+        @"priority": priority,
+        @"position": @(nextPosition),
     } mutableCopy];
     [self modifyItems:^(NSMutableArray<NSMutableDictionary *> *items) {
         for (NSDictionary *candidate in items) {
@@ -832,7 +1125,8 @@ static NSString *APNormalizedWorkspace(NSString *value) {
     NSTextField *titleField = nil;
     NSTextView *noteView = nil;
     NSTextField *workspaceField = nil;
-    alert.accessoryView = APEditorForm(item, &titleField, &noteView, &workspaceField);
+    NSSegmentedControl *priorityControl = nil;
+    alert.accessoryView = APEditorForm(item, &titleField, &noteView, &workspaceField, &priorityControl);
     alert.window.initialFirstResponder = titleField;
 
     if ([alert runModal] != NSAlertFirstButtonReturn) {
@@ -841,6 +1135,7 @@ static NSString *APNormalizedWorkspace(NSString *value) {
     NSString *title = [titleField.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     NSString *note = [noteView.string stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     NSString *workspace = APNormalizedWorkspace(workspaceField.stringValue);
+    NSString *priority = APPriorityForSegment(priorityControl.selectedSegment);
     if (title.length == 0 || note.length == 0) {
         return;
     }
@@ -851,6 +1146,7 @@ static NSString *APNormalizedWorkspace(NSString *value) {
                 candidate[@"title"] = title;
                 candidate[@"note"] = note;
                 candidate[@"workspace_path"] = workspace;
+                candidate[@"priority"] = priority;
                 break;
             }
         }
@@ -863,7 +1159,8 @@ static NSString *APNormalizedWorkspace(NSString *value) {
         if (!store) {
             return NO;
         }
-        NSMutableArray *pending = store[@"pending"];
+        NSMutableArray<NSMutableDictionary *> *pending = [APOrderedPendingCopies(store[@"pending"]) mutableCopy];
+        store[@"pending"] = pending;
         NSUInteger index = [pending indexOfObjectPassingTest:^BOOL(
             NSDictionary *candidate,
             __unused NSUInteger candidateIndex,
@@ -878,7 +1175,50 @@ static NSString *APNormalizedWorkspace(NSString *value) {
         NSISO8601DateFormatter *formatter = [[NSISO8601DateFormatter alloc] init];
         item[@"completed_at"] = [formatter stringFromDate:NSDate.date];
         [pending removeObjectAtIndex:index];
+        [pending enumerateObjectsUsingBlock:^(NSMutableDictionary *candidate, NSUInteger position, __unused BOOL *stop) {
+            candidate[@"position"] = @(position);
+        }];
         [store[@"archive"] addObject:item];
+        return [self writeStore:store error:error];
+    } error:nil];
+    [self refreshAndNotify:NO];
+}
+
+- (void)reorderItemsWithIdentifiers:(NSArray<NSString *> *)identifiers {
+    [self withExclusiveLock:^BOOL(NSError **error) {
+        NSMutableDictionary *store = [self mutableStoreFromDisk:error];
+        if (!store) {
+            return NO;
+        }
+        NSArray<NSMutableDictionary *> *current = APOrderedPendingCopies(store[@"pending"]);
+        NSMutableDictionary<NSString *, NSMutableDictionary *> *byIdentifier = [NSMutableDictionary dictionary];
+        for (NSMutableDictionary *item in current) {
+            NSString *identifier = item[@"id"];
+            if (identifier.length > 0) {
+                byIdentifier[identifier] = item;
+            }
+        }
+
+        NSMutableArray<NSMutableDictionary *> *reordered = [NSMutableArray arrayWithCapacity:current.count];
+        NSMutableSet<NSString *> *included = [NSMutableSet set];
+        for (NSString *identifier in identifiers) {
+            NSMutableDictionary *item = byIdentifier[identifier];
+            if (item && ![included containsObject:identifier]) {
+                [reordered addObject:item];
+                [included addObject:identifier];
+            }
+        }
+        for (NSMutableDictionary *item in current) {
+            NSString *identifier = item[@"id"];
+            if (identifier.length == 0 || ![included containsObject:identifier]) {
+                [reordered addObject:item];
+            }
+        }
+        [reordered enumerateObjectsUsingBlock:^(NSMutableDictionary *item, NSUInteger position, __unused BOOL *stop) {
+            item[@"position"] = @(position);
+            item[@"priority"] = APNormalizedPriority(item[@"priority"]);
+        }];
+        store[@"pending"] = reordered;
         return [self writeStore:store error:error];
     } error:nil];
     [self refreshAndNotify:NO];
@@ -917,11 +1257,7 @@ static NSString *APNormalizedWorkspace(NSString *value) {
         if (!store) {
             return NO;
         }
-        NSMutableArray *items = store[@"pending"];
-        [items sortUsingComparator:^NSComparisonResult(NSDictionary *left, NSDictionary *right) {
-            return [left[@"created_at"] compare:right[@"created_at"]];
-        }];
-        result = [items copy];
+        result = [APOrderedPendingCopies(store[@"pending"]) copy];
         return YES;
     } error:error];
     return success ? result : nil;

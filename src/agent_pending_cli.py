@@ -14,6 +14,31 @@ from pathlib import Path
 DEFAULT_DATA_DIRECTORY = (
     Path.home() / "Library" / "Application Support" / "Agent Pending"
 )
+VALID_PRIORITIES = ("high", "medium", "low")
+DEFAULT_PRIORITY = "medium"
+
+
+def normalized_priority(value):
+    return value if value in VALID_PRIORITIES else DEFAULT_PRIORITY
+
+
+def normalized_pending_item(item, fallback_position):
+    candidate = dict(item)
+    position = candidate.get("position")
+    candidate["position"] = (
+        position if isinstance(position, int) and position >= 0 else fallback_position
+    )
+    candidate["priority"] = normalized_priority(candidate.get("priority"))
+    return candidate
+
+
+def ordered_pending(items):
+    candidates = [
+        (normalized_pending_item(item, index), index)
+        for index, item in enumerate(items)
+    ]
+    candidates.sort(key=lambda pair: (pair[0]["position"], pair[1]))
+    return [item for item, _ in candidates]
 
 
 class PendingStore:
@@ -36,30 +61,42 @@ class PendingStore:
     def list_items(self):
         with self.locked():
             items = self._read_unlocked()["pending"]
-        return sorted(items, key=lambda item: item["created_at"])
+        return ordered_pending(items)
 
     def list_archive(self):
         with self.locked():
             items = self._read_unlocked()["archive"]
         return sorted(items, key=lambda item: item["completed_at"], reverse=True)
 
-    def add(self, title, note, workspace_path, allow_duplicate=False):
-        item = {
-            "id": str(uuid.uuid4()),
-            "title": required(title, "标题"),
-            "note": required(note, "待处理内容"),
-            "workspace_path": required(workspace_path, "工作区路径"),
-            "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        }
+    def add(
+        self,
+        title,
+        note,
+        workspace_path,
+        allow_duplicate=False,
+        priority=DEFAULT_PRIORITY,
+    ):
+        priority = required(priority, "优先级")
+        if priority not in VALID_PRIORITIES:
+            raise ValueError("优先级必须是 high、medium 或 low")
         with self.locked():
             store = self._read_unlocked()
+            item = {
+                "id": str(uuid.uuid4()),
+                "title": required(title, "标题"),
+                "note": required(note, "待处理内容"),
+                "workspace_path": required(workspace_path, "工作区路径"),
+                "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "priority": priority,
+                "position": self._next_position(store["pending"]),
+            }
             if not allow_duplicate:
-                for existing in store["pending"]:
+                for index, existing in enumerate(store["pending"]):
                     if all(
                         existing[field] == item[field]
                         for field in ("title", "note", "workspace_path")
                     ):
-                        return existing, False
+                        return normalized_pending_item(existing, index), False
             store["pending"].append(item)
             self._write_unlocked(store)
         return item, True
@@ -77,10 +114,14 @@ class PendingStore:
             )
             if index is None:
                 raise ValueError(f"找不到待确认事项：{item_id}")
-            item = dict(store["pending"].pop(index))
+            item = normalized_pending_item(store["pending"].pop(index), index)
             item["completed_at"] = datetime.now(timezone.utc).isoformat(
                 timespec="seconds"
             )
+            pending = ordered_pending(store["pending"])
+            for position, candidate in enumerate(pending):
+                candidate["position"] = position
+            store["pending"] = pending
             store["archive"].append(item)
             self._write_unlocked(store)
         return item
@@ -100,9 +141,76 @@ class PendingStore:
                 raise ValueError(f"找不到已归档事项：{item_id}")
             item = dict(store["archive"].pop(index))
             item.pop("completed_at", None)
+            item["priority"] = normalized_priority(item.get("priority"))
+            item["position"] = self._next_position(store["pending"])
             store["pending"].append(item)
             self._write_unlocked(store)
         return item
+
+    def set_priority(self, item_id, priority):
+        priority = required(priority, "优先级")
+        if priority not in VALID_PRIORITIES:
+            raise ValueError("优先级必须是 high、medium 或 low")
+        with self.locked():
+            store = self._read_unlocked()
+            index = next(
+                (
+                    index
+                    for index, item in enumerate(store["pending"])
+                    if item["id"] == item_id
+                ),
+                None,
+            )
+            if index is None:
+                raise ValueError(f"找不到待确认事项：{item_id}")
+            store["pending"][index]["priority"] = priority
+            item = normalized_pending_item(store["pending"][index], index)
+            self._write_unlocked(store)
+        return item
+
+    def move(self, item_id, *, before=None, after=None, top=False, bottom=False):
+        with self.locked():
+            store = self._read_unlocked()
+            pending = ordered_pending(store["pending"])
+            source_index = next(
+                (index for index, item in enumerate(pending) if item["id"] == item_id),
+                None,
+            )
+            if source_index is None:
+                raise ValueError(f"找不到待确认事项：{item_id}")
+            item = pending.pop(source_index)
+
+            if top:
+                destination = 0
+            elif bottom:
+                destination = len(pending)
+            else:
+                target_id = before or after
+                target_index = next(
+                    (
+                        index
+                        for index, candidate in enumerate(pending)
+                        if candidate["id"] == target_id
+                    ),
+                    None,
+                )
+                if target_index is None:
+                    raise ValueError(f"找不到目标事项：{target_id}")
+                destination = target_index if before else target_index + 1
+            pending.insert(destination, item)
+
+            for position, candidate in enumerate(pending):
+                candidate["position"] = position
+                candidate["priority"] = normalized_priority(candidate.get("priority"))
+            store["pending"] = pending
+            self._write_unlocked(store)
+        return dict(item, position=destination)
+
+    @staticmethod
+    def _next_position(items):
+        if not items:
+            return 0
+        return max(item["position"] for item in ordered_pending(items)) + 1
 
     def _read_unlocked(self):
         if not self.data_file.exists():
@@ -166,6 +274,9 @@ def build_parser():
     add_parser.add_argument("--title", required=True)
     add_parser.add_argument("--note", required=True)
     add_parser.add_argument("--workspace", required=True)
+    add_parser.add_argument(
+        "--priority", choices=VALID_PRIORITIES, default=DEFAULT_PRIORITY
+    )
     add_parser.add_argument("--allow-duplicate", action="store_true")
 
     list_parser = subparsers.add_parser("list", help="查看当前事项")
@@ -179,6 +290,18 @@ def build_parser():
 
     restore_parser = subparsers.add_parser("restore", help="恢复已归档事项")
     restore_parser.add_argument("item_id")
+
+    priority_parser = subparsers.add_parser("priority", help="修改事项重要程度")
+    priority_parser.add_argument("item_id")
+    priority_parser.add_argument("level", choices=VALID_PRIORITIES)
+
+    move_parser = subparsers.add_parser("move", help="修改事项处理顺序")
+    move_parser.add_argument("item_id")
+    destination = move_parser.add_mutually_exclusive_group(required=True)
+    destination.add_argument("--top", action="store_true")
+    destination.add_argument("--bottom", action="store_true")
+    destination.add_argument("--before", metavar="ITEM_ID")
+    destination.add_argument("--after", metavar="ITEM_ID")
     return parser
 
 
@@ -192,6 +315,7 @@ def main(argv=None, data_directory=None):
             args.note,
             args.workspace,
             allow_duplicate=args.allow_duplicate,
+            priority=args.priority,
         )
         payload = {**item, "created": created}
         print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
@@ -227,6 +351,18 @@ def main(argv=None, data_directory=None):
     elif args.command == "restore":
         item = store.restore(args.item_id)
         print(json.dumps({**item, "status": "pending"}, ensure_ascii=False))
+    elif args.command == "priority":
+        item = store.set_priority(args.item_id, args.level)
+        print(json.dumps(item, ensure_ascii=False, sort_keys=True))
+    elif args.command == "move":
+        item = store.move(
+            args.item_id,
+            before=args.before,
+            after=args.after,
+            top=args.top,
+            bottom=args.bottom,
+        )
+        print(json.dumps(item, ensure_ascii=False, sort_keys=True))
     return 0
 
 

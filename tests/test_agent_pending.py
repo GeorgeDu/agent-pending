@@ -29,6 +29,8 @@ class PendingStoreTests(unittest.TestCase):
 
         items = self.store.list_items()
         self.assertEqual([first["id"], second["id"]], [item["id"] for item in items])
+        self.assertEqual(["medium", "medium"], [item["priority"] for item in items])
+        self.assertEqual([0, 1], [item["position"] for item in items])
 
         archived = self.store.complete(first["id"])
         self.assertEqual([second["id"]], [item["id"] for item in self.store.list_items()])
@@ -37,8 +39,54 @@ class PendingStoreTests(unittest.TestCase):
 
         restored = self.store.restore(first["id"])
         self.assertEqual(first["id"], restored["id"])
+        self.assertEqual(1, restored["position"])
+        self.assertEqual([second["id"], first["id"]], [item["id"] for item in self.store.list_items()])
         self.assertEqual(2, len(self.store.list_items()))
         self.assertEqual([], self.store.list_archive())
+
+    def test_priority_is_independent_from_processing_order(self):
+        first, _ = self.store.add(
+            "高重要事项", "稍后处理", "/tmp/high", priority="high"
+        )
+        second, _ = self.store.add("普通事项", "先处理", "/tmp/medium")
+
+        self.store.move(second["id"], top=True)
+        items = self.store.list_items()
+
+        self.assertEqual([second["id"], first["id"]], [item["id"] for item in items])
+        self.assertEqual(["medium", "high"], [item["priority"] for item in items])
+
+    def test_move_before_after_top_and_bottom(self):
+        first, _ = self.store.add("一", "一", "/tmp/1")
+        second, _ = self.store.add("二", "二", "/tmp/2")
+        third, _ = self.store.add("三", "三", "/tmp/3")
+
+        self.store.move(third["id"], top=True)
+        self.assertEqual(
+            [third["id"], first["id"], second["id"]],
+            [item["id"] for item in self.store.list_items()],
+        )
+        self.store.move(third["id"], after=first["id"])
+        self.assertEqual(
+            [first["id"], third["id"], second["id"]],
+            [item["id"] for item in self.store.list_items()],
+        )
+        self.store.move(second["id"], before=first["id"])
+        self.assertEqual(
+            [second["id"], first["id"], third["id"]],
+            [item["id"] for item in self.store.list_items()],
+        )
+        self.store.move(second["id"], bottom=True)
+        items = self.store.list_items()
+        self.assertEqual([first["id"], third["id"], second["id"]], [item["id"] for item in items])
+        self.assertEqual([0, 1, 2], [item["position"] for item in items])
+
+    def test_set_priority_validates_level(self):
+        item, _ = self.store.add("事项", "内容", "/tmp/item")
+        changed = self.store.set_priority(item["id"], "low")
+        self.assertEqual("low", changed["priority"])
+        with self.assertRaisesRegex(ValueError, "优先级必须"):
+            self.store.set_priority(item["id"], "urgent")
 
     def test_storage_is_valid_utf8_json(self):
         self.store.add("项目甲", "确认中文记录", "/tmp/项目甲")
@@ -88,6 +136,8 @@ class PendingStoreTests(unittest.TestCase):
         self.store.data_file.write_text(json.dumps(legacy), encoding="utf-8")
 
         self.assertEqual("legacy-id", self.store.list_items()[0]["id"])
+        self.assertEqual("medium", self.store.list_items()[0]["priority"])
+        self.assertEqual(0, self.store.list_items()[0]["position"])
         with self.store.data_file.open(encoding="utf-8") as source:
             migrated = json.load(source)
         self.assertEqual(1, migrated["version"])
@@ -118,6 +168,7 @@ class PendingCliTests(unittest.TestCase):
             )
             item = json.loads(added.stdout)
             self.assertTrue(item["created"])
+            self.assertEqual("medium", item["priority"])
 
             completed = subprocess.run(
                 [sys.executable, str(MODULE_PATH), "complete", item["id"]],
@@ -136,6 +187,70 @@ class PendingCliTests(unittest.TestCase):
                 env=environment,
             )
             self.assertEqual("pending", json.loads(restored.stdout)["status"])
+
+    def test_priority_and_move_commands(self):
+        with tempfile.TemporaryDirectory() as data_directory:
+            environment = {**os.environ, "AGENT_PENDING_DATA_DIR": data_directory}
+            items = []
+            for title in ("First", "Second"):
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        str(MODULE_PATH),
+                        "add",
+                        "--title",
+                        title,
+                        "--note",
+                        "Review",
+                        "--workspace",
+                        "/tmp/review",
+                    ],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    env=environment,
+                )
+                items.append(json.loads(result.stdout))
+
+            changed = subprocess.run(
+                [
+                    sys.executable,
+                    str(MODULE_PATH),
+                    "priority",
+                    items[0]["id"],
+                    "high",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+            self.assertEqual("high", json.loads(changed.stdout)["priority"])
+
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(MODULE_PATH),
+                    "move",
+                    items[1]["id"],
+                    "--top",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+            listed = subprocess.run(
+                [sys.executable, str(MODULE_PATH), "list", "--json"],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+            self.assertEqual(
+                [items[1]["id"], items[0]["id"]],
+                [item["id"] for item in json.loads(listed.stdout)],
+            )
 
 
 if __name__ == "__main__":

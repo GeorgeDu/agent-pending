@@ -45,7 +45,7 @@ class PublicRepositoryTests(unittest.TestCase):
         with (ROOT / "Resources" / "Info.plist").open("rb") as source:
             info = plistlib.load(source)
         self.assertEqual("io.github.georgedu.agent-pending", info["CFBundleIdentifier"])
-        self.assertEqual("0.1.1", info["CFBundleShortVersionString"])
+        self.assertEqual("0.2.0", info["CFBundleShortVersionString"])
 
     def test_skill_is_explicit_only(self):
         metadata = (ROOT / "skill" / "agent-pending" / "agents" / "openai.yaml").read_text(
@@ -133,7 +133,7 @@ class PublicRepositoryTests(unittest.TestCase):
         self.assertIn("applicationDidResignActive", source)
         self.assertIn("activateIgnoringOtherApps", source)
 
-    def test_app_has_full_editor_workspace_copy_and_native_mac_palette(self):
+    def test_app_has_full_editor_workspace_copy_and_native_graphite_palette(self):
         source = (ROOT / "src" / "AgentPendingApp.m").read_text(encoding="utf-8")
         self.assertIn("APEditorForm", source)
         self.assertIn("NSTextView *noteView", source)
@@ -141,13 +141,41 @@ class PublicRepositoryTests(unittest.TestCase):
         self.assertIn('APIconButton(@"doc.on.doc"', source)
         self.assertIn("NSPasteboard.generalPasteboard", source)
         self.assertIn("NSVisualEffectMaterialHeaderView", source)
-        self.assertIn("NSColor.systemIndigoColor", source)
-        self.assertIn("NSColor.systemTealColor", source)
-        self.assertIn("NSColor.systemPurpleColor", source)
+        self.assertIn("APTechGrayColor", source)
+        self.assertIn("dynamicProvider", source)
         self.assertIn("NSColor.controlBackgroundColor", source)
         self.assertIn("row.layer.shadowOpacity", source)
         self.assertNotIn("APLogoOrange", source)
         self.assertNotIn("NSColor.systemBlueColor", source)
+        self.assertNotIn("NSColor.systemIndigoColor", source)
+        self.assertNotIn("NSColor.systemTealColor", source)
+        self.assertNotIn("NSColor.systemPurpleColor", source)
+
+    def test_app_supports_independent_priority_and_drag_order(self):
+        source = (ROOT / "src" / "AgentPendingApp.m").read_text(encoding="utf-8")
+        cli = (ROOT / "src" / "agent_pending_cli.py").read_text(encoding="utf-8")
+        self.assertIn("NSTableViewDataSource", source)
+        self.assertIn("registerForDraggedTypes", source)
+        self.assertIn("pasteboardWriterForRow", source)
+        self.assertIn("reorderItemsWithIdentifiers", source)
+        self.assertIn('APText(@"priority_high")', source)
+        self.assertIn('APText(@"priority_medium")', source)
+        self.assertIn('APText(@"priority_low")', source)
+        self.assertIn("moveTopClicked", source)
+        self.assertIn("VALID_PRIORITIES", cli)
+        self.assertIn('subparsers.add_parser("move"', cli)
+
+    def test_popover_width_adapts_and_priority_uses_graphite_depth_only(self):
+        source = (ROOT / "src" / "AgentPendingApp.m").read_text(encoding="utf-8")
+        self.assertIn("screenWidth * 0.30", source)
+        self.assertIn("MIN(640, MAX(520", source)
+        self.assertIn("return 1.00", source)
+        self.assertIn("return 0.70", source)
+        self.assertIn("return 0.40", source)
+        self.assertIn("copy.contentTintColor = priorityColor", source)
+        self.assertIn("edit.contentTintColor = priorityColor", source)
+        self.assertIn("complete.contentTintColor = priorityColor", source)
+        self.assertNotIn("APPriorityBadgeView", source)
 
     def test_default_build_app_is_hidden_from_launchpad(self):
         build = (ROOT / "scripts" / "build.sh").read_text(encoding="utf-8")

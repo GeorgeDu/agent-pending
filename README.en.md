@@ -20,10 +20,11 @@ It is not a project manager, and it never discovers tasks automatically. An agen
 ## Features
 
 - A persistent menu-bar count; left-click to open or close the compact list.
-- Each row shows a title, one next action, the workspace name, and capture time. Copy the full workspace path with one click.
-- Edit the title, pending action, and workspace in the app, or complete the item and move it to the archive.
+- Each row shows a title, one next action, importance, the workspace name, and capture time. Copy the full workspace path with one click.
+- Drag cards to change processing order. High, Medium, and Low indicate importance only and never reorder items automatically.
+- Edit the title, pending action, importance, and workspace in the app, or complete the item and move it to the archive.
 - Native macOS materials, system typography, and dynamic system colors adapt to light and dark appearances.
-- Add, list, archive, and restore through the CLI. Identical additions are idempotent by default.
+- Add, list, reorder, change importance, archive, and restore through the CLI. Identical additions are idempotent by default.
 - One macOS notification when the app detects a new item.
 - Chinese and English UI. Chinese is the default; switch language from the right-click menu.
 - Local-only data, login startup, and an explicit Quit action.
@@ -64,6 +65,7 @@ Each invocation writes exactly one item. The skill summarizes a title and one ne
 ### Work from the menu bar
 
 - Left-click the icon: open or close the list.
+- Drag a card to change processing order, or right-click it to move it to the top, up, or down.
 - Pencil: edit the title and next action.
 - Checkmark: complete and archive.
 - Right-click the icon: show the list, switch language, restart, or quit.
@@ -79,6 +81,8 @@ agent-pending add \
   --workspace "$PWD"
 
 agent-pending list --json
+agent-pending priority <item-id> high
+agent-pending move <item-id> --top
 agent-pending complete <item-id>
 agent-pending archive --json
 agent-pending restore <item-id>
@@ -96,14 +100,14 @@ The CLI atomically updates local JSON
 The menu-bar app refreshes its count, list, and one-time notification
 ```
 
-An item has four core fields: title, next action, workspace path, and time. The path is location metadata only; neither the app nor the skill reads workspace contents because of it.
+An item stores a title, next action, workspace path, time, processing position, and importance. Position answers what to do first; importance is a separate decision cue. The path is location metadata only; neither the app nor the skill reads workspace contents because of it.
 
 ## Deliberate non-features
 
-Agent Pending v0.1 intentionally excludes:
+Agent Pending v0.2 intentionally excludes:
 
 - Automatic discovery, capture, or background task scanning
-- Priorities, tags, project hierarchies, due dates, and recurring reminders
+- Multi-level tags, project hierarchies, due dates, and recurring reminders
 - Cloud sync, accounts, team permissions, and collaborative boards
 - GUI archive history
 
@@ -143,7 +147,7 @@ AGENT_PENDING_SCREENSHOT_MODE=1 ./scripts/demo.sh
 ./scripts/build.sh
 ```
 
-The v0.1 source release is compiled and ad-hoc signed locally. The repository does not yet ship an Apple-notarized binary.
+The v0.2 source release is compiled and ad-hoc signed locally. The repository does not yet ship an Apple-notarized binary.
 
 ## Uninstall
 

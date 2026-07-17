@@ -22,6 +22,8 @@ Record one item only after an explicit invocation. The list is external memory f
   --workspace "<absolute project path>"
 ```
 
+If the user explicitly states that the item is high or low importance, append `--priority high` or `--priority low`. Otherwise omit the option so the CLI uses `medium`. Importance does not determine processing order.
+
 6. Treat exit code 0 plus a JSON object containing a non-empty `id` as success. If `created` is false, report that the identical item already existed.
 
 Return only one line, matching the user's language (Chinese by default). Use one of these forms:
